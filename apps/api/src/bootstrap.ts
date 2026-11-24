@@ -60,7 +60,7 @@ export function configureApp(app: INestApplication, origin: string) {
   SwaggerModule.setup('api/docs', app, () => SwaggerModule.createDocument(app, config));
 }
 
-export async function createApp() {
+export function configuredOrigin() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL is required');
   const origin = process.env.PUBLIC_ORIGIN ?? (process.env.NODE_ENV === 'production' ? '' : 'http://localhost:3000');
   const publicUrl = new URL(origin);
@@ -68,6 +68,11 @@ export async function createApp() {
       (process.env.NODE_ENV === 'production' && publicUrl.protocol !== 'https:')) {
     throw new Error('PUBLIC_ORIGIN must be an HTTP origin, with HTTPS required in production');
   }
+  return origin;
+}
+
+export async function createApp() {
+  const origin = configuredOrigin();
   const app = await NestFactory.create(AppModule, { logger: new ConsoleLogger({ json: true }) });
   configureApp(app, origin);
   return app;
