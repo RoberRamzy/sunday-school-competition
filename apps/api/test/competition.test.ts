@@ -1,7 +1,7 @@
 import 'reflect-metadata';
 import { strict as assert } from 'node:assert';
 import { execFileSync } from 'node:child_process';
-import { randomUUID } from 'node:crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { after, before, test } from 'node:test';
 import type { INestApplication } from '@nestjs/common';
 import { PrismaClient } from '@prisma/client';
@@ -373,7 +373,7 @@ test('exact sorting awards zero for a partial order, and skipped questions stay 
   assert.equal(result.unansweredCount, 1);
 });
 
-type Standing = { rank: number; alias: string; grade: string; score: number; maxScore: number; name?: string };
+type Standing = { rank: number; grade: string; score: number; maxScore: number; name: string };
 type Board = { scope: string; rows: Standing[] };
 type Leaderboard = { overallAvailable: boolean; boards: Board[]; scopes: string[]; published: boolean;
   revision: string; publication: { title: string; boards: Board[] } };
@@ -432,23 +432,36 @@ test('shared draft questions and dense overall and grade leaderboards use explic
   const gradePublic = await ok<Leaderboard['publication']>(request(publicPath));
   assert.deepEqual(gradePublic, first.publication);
   assert.deepEqual(gradePublic.boards.map(board => board.scope), [gradeId]);
+  assert.ok(gradePublic.boards[0].rows.some(row => row.name === 'Student 0'));
   assert.equal((await request(boards, admin, { scopes: ['overall'], tiePolicy: 'SCORE_THEN_TIME' }, 'PUT')).status, 409);
   const result = await ok<{ result: unknown }>(request(`/student/competitions/${id}`, students[0].cookie));
   assert.equal(result.result, null);
 
   await ok(request(boards + '/unpublish', admin, {}));
   assert.equal((await request(publicPath)).status, 404);
+  await db.student.update({ where: { id: students[5].id }, data: { fullName: 'Full Student Name 5' } });
   const withTime = await ok<Leaderboard>(request(boards, admin, { scopes: ['overall'], tiePolicy: 'SCORE_THEN_TIME' }, 'PUT'));
   assert.equal((await request(boards + '/publish', admin, { revision: first.revision })).status, 409);
   const rows = withTime.boards.find(board => board.scope === 'overall')!.rows;
-  assert.equal(rows[0].name, 'Student 5');
+  assert.equal(rows[0].name, 'Full Student Name 5');
   assert.deepEqual(rows.map(row => row.rank), [1, 2, 3, 3, 4, 5]);
   await ok(request(boards + '/publish', admin, { revision: withTime.revision }));
   const body = await ok<Leaderboard['publication']>(request(publicPath));
   assert.deepEqual(body, withTime.publication);
   const publicRows = body.boards[0].rows;
-  assert.ok(publicRows.every(row => typeof row.alias === 'string' && !('name' in row) && !('studentId' in row)));
-  assert.deepEqual(publicRows[1].alias, gradePublic.boards[0].rows[0].alias);
+  assert.ok(publicRows.every(row => typeof row.name === 'string' && !('alias' in row) && !('studentId' in row)));
+  assert.equal(publicRows[1].name, gradePublic.boards[0].rows[0].name);
+
+  const { leaderboardAliasKey } = await db.competition.findUniqueOrThrow({ where: { id } });
+  const { name: legacyName, ...legacyStats } = publicRows[0];
+  const alias = 'Player ' + createHmac('sha256', leaderboardAliasKey).update(students[5].id).digest('hex').slice(0, 20).toUpperCase();
+  await db.competition.update({ where: { id }, data: {
+    publicLeaderboard: { title: body.title, boards: [{ ...body.boards[0], rows: [{ ...legacyStats, alias }] }] },
+  } });
+  const legacy = await ok<Leaderboard['publication']>(request(publicPath));
+  assert.deepEqual(legacy.boards[0].rows, [{ ...legacyStats, name: legacyName }]);
+  const preview = await ok<Leaderboard>(request(boards, admin));
+  assert.deepEqual(preview.publication, legacy);
 });
 
 test('legacy grades require matching frozen questions for Overall and drafts can be copied to shared questions', { skip: !databaseUrl }, async () => {
@@ -526,7 +539,7 @@ test('permanent deletion removes only the selected competition and student resul
   assert.equal((await request('/auth/me', first.cookie)).status, 401);
   const after = await ok<Leaderboard['publication']>(request(publicPath));
   assert.ok(after.boards.every(board => board.rows.length === 1 &&
-    board.rows[0].rank === 1 && board.rows[0].alias === view.boards[0].rows[1].alias));
+    board.rows[0].rank === 1 && board.rows[0].name === second.student.fullName));
 
   assert.equal((await request(path, servant, { confirmation: 'DELETE' }, 'DELETE')).status, 403);
   assert.equal((await request(path, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 204);

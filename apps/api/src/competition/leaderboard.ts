@@ -20,6 +20,19 @@ const settings = z.strictObject({
 const revisionInput = z.strictObject({ revision: z.string().regex(/^[a-f0-9]{64}$/) });
 type Settings = z.infer<typeof settings>;
 
+const standing = z.object({ rank: z.number(), grade: z.string(), score: z.number(), maxScore: z.number() });
+const savedPublication = z.object({
+  title: z.string(),
+  boards: z.array(z.object({
+    scope: z.string(), name: z.string().nullable(),
+    rows: z.array(z.union([standing.extend({ name: z.string() }), standing.extend({ alias: z.string() })])),
+  })),
+});
+
+function legacyAlias(key: string, studentId: string) {
+  return 'Player ' + createHmac('sha256', key).update(studentId).digest('hex').slice(0, 20).toUpperCase();
+}
+
 function legacySignature(questions: { snapshot: Prisma.JsonValue }[]) {
   if (!questions.length) return null;
   const signatures = questions.map(({ snapshot }) => {
@@ -52,25 +65,22 @@ export class LeaderboardService {
     const attempts = await tx.attempt.findMany({
       where: { competitionId: competition.id, status: { in: ['SUBMITTED', 'TIMED_OUT'] } },
       select: { studentId: true, gradeId: true, score: true, maxScore: true, startedAt: true, finishedAt: true,
-        student: { select: { displayLabel: true } } },
+        student: { select: { fullName: true } } },
     });
     const tiePolicy = competition.leaderboardTiePolicy ?? competition.tiePolicy;
-    const rows = attempts.map(attempt => ({
-      ...attempt,
-      alias: 'Player ' + createHmac('sha256', competition.leaderboardAliasKey).update(attempt.studentId).digest('hex').slice(0, 20).toUpperCase(),
-    })).sort((a, b) => a.alias.localeCompare(b.alias));
+    const rows = attempts.sort((a, b) => a.student.fullName.localeCompare(b.student.fullName) ||
+      a.studentId.localeCompare(b.studentId));
     const scopes = [...(overallAvailable ? [{ scope: 'overall', name: null }] : []),
       ...grades.map(g => ({ scope: g.gradeId, name: g.grade.name }))];
     const boards = scopes.map(board => ({
       ...board,
       rows: denseRanking(board.scope === 'overall' ? rows : rows.filter(row => row.gradeId === board.scope), tiePolicy)
         .map(({ attempt, rank }) => ({
-          rank, alias: attempt.alias, grade: gradeNames.get(attempt.gradeId) ?? '',
-          score: Number(attempt.score), maxScore: attempt.maxScore, name: attempt.student.displayLabel,
+          rank, grade: gradeNames.get(attempt.gradeId) ?? '',
+          score: Number(attempt.score), maxScore: attempt.maxScore, name: attempt.student.fullName,
         })),
     }));
-    const publicBoards = boards.filter(board => competition.leaderboardScopes.includes(board.scope))
-      .map(board => ({ ...board, rows: board.rows.map(({ name: _name, ...row }) => row) }));
+    const publicBoards = boards.filter(board => competition.leaderboardScopes.includes(board.scope));
     const publication = { title: competition.title, boards: publicBoards };
     const revision = createHash('sha256').update(JSON.stringify([tiePolicy, publication])).digest('hex');
     return { overallAvailable, tiePolicy, boards, scopes: competition.leaderboardScopes,
@@ -92,7 +102,10 @@ export class LeaderboardService {
   preview(actor: StaffPrincipal, id: string) {
     return this.transaction(actor, id, async (tx, competition, now) => {
       const view = await this.view(tx, competition, now);
-      return { ...view, publication: competition.publicLeaderboard ?? view.publication };
+      const publication = competition.publicLeaderboard
+        ? await this.readPublication(tx, competition)
+        : view.publication;
+      return { ...view, publication };
     });
   }
 
@@ -142,12 +155,43 @@ export class LeaderboardService {
     await tx.competition.update({ where: { id }, data: { publicLeaderboard: publication } });
   }
 
-  async publicBoard(id: string) {
-    const competition = await this.db.competition.findUnique({
-      where: { id }, select: { publicLeaderboard: true },
-    });
-    if (!competition?.publicLeaderboard) throw new NotFoundException('Leaderboard is not published');
-    return competition.publicLeaderboard;
+  private async readPublication(tx: Prisma.TransactionClient,
+    competition: Pick<Competition, 'id' | 'publicLeaderboard' | 'leaderboardAliasKey'>) {
+    const publication = savedPublication.parse(competition.publicLeaderboard);
+    const names = new Map<string, string>();
+    if (publication.boards.some(board => board.rows.some(row => 'alias' in row))) {
+      // Resolve older published snapshots without recomputing their frozen ranks or scores.
+      const attempts = await tx.attempt.findMany({
+        where: { competitionId: competition.id },
+        distinct: ['studentId'],
+        select: { studentId: true, student: { select: { fullName: true } } },
+      });
+      for (const { studentId, student } of attempts) {
+        names.set(legacyAlias(competition.leaderboardAliasKey, studentId), student.fullName);
+      }
+    }
+    return {
+      ...publication,
+      boards: publication.boards.map(board => ({
+        ...board,
+        rows: board.rows.flatMap(row => {
+          if ('name' in row) return [row];
+          const { alias, ...stats } = row;
+          const name = names.get(alias);
+          return name === undefined ? [] : [{ ...stats, name }];
+        }),
+      })),
+    };
+  }
+
+  publicBoard(id: string) {
+    return this.db.$transaction(async tx => {
+      const competition = await tx.competition.findUnique({
+        where: { id }, select: { id: true, publicLeaderboard: true, leaderboardAliasKey: true },
+      });
+      if (!competition?.publicLeaderboard) throw new NotFoundException('Leaderboard is not published');
+      return this.readPublication(tx, competition);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
 }
 

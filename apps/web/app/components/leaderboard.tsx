@@ -6,7 +6,7 @@ import { ApiError, api, errorText, json, type Language, type Theme, type Transla
 import { ChristmasLights, SiteBrand } from "./site-brand";
 import { Icon } from "./ui-icon";
 
-type Row = { rank: number; alias: string; name?: string; grade: string; score: number; maxScore: number };
+type Row = { rank: number; name: string; grade: string; score: number; maxScore: number };
 type Board = { scope: string; name: string | null; rows: Row[] };
 type PublicBoards = { title: string; boards: Board[] };
 type TiePolicy = "SCORE_THEN_TIME" | "SCORE_ONLY";
@@ -19,7 +19,7 @@ function boardName(board: Board, t: Translate) {
   return board.name ?? t("Overall", "جميع الصفوف");
 }
 
-function BoardView({ boards, t, showNames = false }: { boards: Board[]; t: Translate; showNames?: boolean }) {
+function BoardView({ boards, t }: { boards: Board[]; t: Translate }) {
   const [scope, setScope] = useState("");
   const selected = boards.find(board => board.scope === scope) ?? boards[0];
   if (!selected) return <p className="note">{t("No boards selected.", "لم تُحدَّد أي لوحة.")}</p>;
@@ -33,15 +33,13 @@ function BoardView({ boards, t, showNames = false }: { boards: Board[]; t: Trans
         <table className="roster-table data-table">
           <thead><tr>
             <th scope="col">{t("Rank", "الترتيب")}</th>
-            {showNames && <th scope="col">{t("Student", "الطالب")}</th>}
-            <th scope="col">{t("Public alias", "الاسم المستعار")}</th>
+            <th scope="col">{t("Full name", "الاسم الكامل")}</th>
             <th scope="col">{t("Grade", "الصف")}</th>
             <th scope="col">{t("Score", "النتيجة")}</th>
           </tr></thead>
-          <tbody>{selected.rows.map(row => <tr key={row.alias}>
+          <tbody>{selected.rows.map((row, index) => <tr key={index}>
             <td>{row.rank}</td>
-            {showNames && <td><bdi>{row.name}</bdi></td>}
-            <td><bdi>{row.alias}</bdi></td>
+            <td className="leaderboard-name"><bdi>{row.name}</bdi></td>
             <td><bdi>{row.grade}</bdi></td>
             <td><bdi>{row.score} / {row.maxScore}</bdi></td>
           </tr>)}</tbody>
@@ -104,7 +102,7 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
     {view && <>
       {!canPublish && <p className="note">{t("Provisional standings. Close the competition to publish.", "الترتيب مؤقت. أغلق المسابقة للنشر.")}</p>}
       {!view.overallAvailable && <p className="note">{t("Overall is available when every grade uses the same frozen quiz.", "يتاح الترتيب العام عند استخدام كل الصفوف الاختبار نفسه.")}</p>}
-      <BoardView boards={view.boards} t={t} showNames/>
+      <BoardView boards={view.boards} t={t}/>
       <form className="form-stack" onSubmit={save}>
         <fieldset disabled={busy || view.published} className="form-stack">
           <legend>{t("Leaderboard settings", "إعدادات لوحة الترتيب")}</legend>
@@ -122,6 +120,7 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
       </form>
       <section className="form-stack" aria-label={t("Public preview", "المعاينة العامة")}>
         <h3>{t("Public preview", "المعاينة العامة")}</h3>
+        <p className="note">{t("Published leaderboards show students’ full names to anyone with the link.", "تعرض لوحات الترتيب المنشورة أسماء الطلاب الكاملة لكل من لديه الرابط.")}</p>
         {dirty ? <p className="note">{t("Save your settings to review the public preview.", "احفظ الإعدادات لعرض المعاينة العامة.")}</p>
           : <BoardView boards={view.publication.boards} t={t}/>}
       </section>

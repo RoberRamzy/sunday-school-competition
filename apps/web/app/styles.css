@@ -394,6 +394,7 @@ form .notice { margin-block: .35rem; }
 .christmas-lights i:is(:first-child, :last-child) { margin-bottom: -4px; }
 .christmas-lights i:nth-child(3) { height: 10px; margin-bottom: -9px; }
 
+.leaderboard-name { overflow-wrap: anywhere; }
 [data-theme="christmas"] .staff-board-heading { display: flex; align-items: center; gap: .55rem; }
 [data-theme="christmas"] .public-leaderboard { margin-block: clamp(1.25rem, 4vw, 2.6rem); }
 [data-theme="christmas"] .leaderboard-heading {
@@ -441,7 +442,6 @@ form .notice { margin-block: .35rem; }
     padding-inline: .45rem;
     white-space: normal;
   }
-  [data-theme="christmas"] .public-leaderboard .roster-table td:nth-child(2) { overflow-wrap: anywhere; }
   [data-theme="christmas"] .public-leaderboard .roster-table td:last-child { white-space: nowrap; }
 }
 

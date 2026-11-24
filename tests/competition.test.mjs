@@ -11,6 +11,8 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
   try {
     const {student,grade,pin,activationCode} = await studentFixture(admin);
     fixtureStudentId = student.id;
+    const fullName = 'Full name ' + student.displayLabel;
+    await success(await api(admin, '/admin/students/' + student.id, 'PATCH', {fullName}));
     const alice = await context(engine,{viewport:{width:390,height:844}});
     await success(await api(alice,'/auth/activate','POST',{gradeId:grade.id,studentId:student.id,pin,activationCode}));
     const create = async (route,data) => (await success(await api(admin,route,'POST',data))).json();
@@ -102,8 +104,9 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     await publicPage.goto(publicPath);
     await publicPage.getByRole('heading',{name:title}).waitFor();
     const publicTable = publicPage.getByRole('table');
-    assert.match(await publicTable.innerText(),/Player [A-F0-9]{20}/);
-    assert.ok(!(await publicTable.innerText()).includes(student.displayLabel));
+    await publicTable.getByRole('columnheader',{name:'Full name',exact:true}).waitFor();
+    await publicTable.getByRole('cell',{name:fullName,exact:true}).waitFor();
+    assert.equal(await publicTable.getByRole('cell',{name:student.displayLabel,exact:true}).count(),0);
     await staffPage.getByRole('button',{name:'Unpublish leaderboard'}).click();
     await publicLink.waitFor({state:'hidden'});
     await publicPage.reload();
