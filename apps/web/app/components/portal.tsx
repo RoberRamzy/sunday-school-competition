@@ -7,6 +7,7 @@ import { Icon } from "./ui-icon";
 import { SignIn } from "./sign-in";
 import { Staff } from "./staff";
 import { Student } from "./student";
+import { ChristmasLights, SiteBrand } from "./site-brand";
 
 export function Portal({ staffEntry = false, initialLanguage, initialTheme, initialPrincipal }: {
   staffEntry?: boolean; initialLanguage: Language; initialTheme: Theme; initialPrincipal: Principal | null;
@@ -63,10 +64,8 @@ export function Portal({ staffEntry = false, initialLanguage, initialTheme, init
     <a className="skip-link" href="#main-content">{t("Skip to content", "انتقل إلى المحتوى")}</a>
     <header className="site-header">
       <div className="header-inner">
-        <Link className="wordmark" href={staffEntry ? "/staff" : "/"} prefetch={false}>
-          <span className="brand-icon"><Icon name="book" size={23}/></span>
-          <span>{t("Sunday School", "مدارس الأحد")}<small>{t("Competition", "المسابقة")}</small></span>
-        </Link>
+        <SiteBrand href={staffEntry ? "/staff" : "/"} t={t}/>
+        <ChristmasLights/>
         <nav aria-label={t("Site", "الموقع")}>
           <button className="utility language" type="button" onClick={() => {
             const next: Language = language === "en" ? "ar" : "en";

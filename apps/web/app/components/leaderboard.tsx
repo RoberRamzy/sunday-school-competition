@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, errorText, json, type Language, type Theme, type Translate } from "../api";
+import { ChristmasLights, SiteBrand } from "./site-brand";
+import { Icon } from "./ui-icon";
 
 type Row = { rank: number; alias: string; name?: string; grade: string; score: number; maxScore: number };
 type Board = { scope: string; name: string | null; rows: Row[] };
@@ -91,7 +93,10 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
   const canPublish = view && ["CLOSED", "ARCHIVED"].includes(view.status);
   return <section className="panel form-stack" aria-labelledby="leaderboard-heading">
     <div className="card-heading">
-      <h2 id="leaderboard-heading">{t("Leaderboards", "لوحات الترتيب")}</h2>
+      <h2 id="leaderboard-heading" className="staff-board-heading">
+        <span className="brand-tree"><Icon name="tree" size={24}/></span>
+        {t("Leaderboards", "لوحات الترتيب")}
+      </h2>
       <button type="button" className="link-button" disabled={busy} onClick={() => update("", "GET")}>{t("Refresh standings", "تحديث الترتيب")}</button>
     </div>
     {error ? <p role="alert" className="notice error">{errorText(error, t)}</p> : null}
@@ -142,10 +147,27 @@ export function PublicLeaderboard({ id, language, theme }: { id: string; languag
     });
     return () => controller.abort();
   }, [id]);
-  return <div className="site" data-theme={theme}>
-    <main className="student-shell form-stack">
-      <div><Link href="/" className="link-button">{t("Back to the competition site", "العودة إلى موقع المسابقة")}</Link></div>
-      <h1 dir="auto">{boards?.title ?? t("Leaderboard", "لوحة الترتيب")}</h1>
+  const christmas = theme === "christmas";
+  const back = <Link href="/" className={christmas ? "utility leaderboard-back" : "link-button"}>
+    {t("Back to the competition site", "العودة إلى موقع المسابقة")}
+  </Link>;
+  return <div className="site" data-theme={theme} lang={language} dir={language === "ar" ? "rtl" : "ltr"}>
+    {christmas && <>
+      <a className="skip-link" href="#main-content">{t("Skip to content", "انتقل إلى المحتوى")}</a>
+      <header className="site-header">
+        <div className="header-inner">
+          <SiteBrand href="/" t={t}/>
+          <ChristmasLights/>
+          <nav aria-label={t("Site", "الموقع")}>{back}</nav>
+        </div>
+      </header>
+    </>}
+    <main id="main-content" className="student-shell form-stack public-leaderboard">
+      {!christmas && <div>{back}</div>}
+      <div className="leaderboard-heading">
+        <h1 dir="auto">{boards?.title ?? t("Leaderboard", "لوحة الترتيب")}</h1>
+        {christmas && <div className="leaderboard-art" aria-hidden="true"/>}
+      </div>
       {boards ? <div className="panel"><BoardView boards={boards.boards} t={t}/></div>
         : error ? <p role="alert">{error instanceof ApiError && [400, 404].includes(error.status) ? t("This leaderboard is unavailable.", "لوحة الترتيب غير متاحة.") : errorText(error, t)}</p>
           : <p role="status">{t("Loading standings…", "جارٍ تحميل الترتيب…")}</p>}

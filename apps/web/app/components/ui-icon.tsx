@@ -12,6 +12,7 @@ const paths = {
   logout: <path d="M12 4H4v16h8m3-12 4 4-4 4m-7-4h11"/>,
   check: <path d="m5 12 4 4L19 6"/>,
   star: <path d="M12 2c.8 6 3.1 8.3 9 10-5.9 1.7-8.2 4-9 10-.8-6-3.1-8.3-9-10 5.9-1.7 8.2-4 9-10Z" fill="currentColor" stroke="none"/>,
+  tree: <><path d="m12 2 5 6h-2.5l4.5 5h-3l4 6H4l4-6H5l4.5-5H7l5-6Z" fill="#315c48"/><path d="M12 19v3"/><path d="M10 9h.01M14 12h.01M9 15.5h.01M15.5 16h.01" stroke="#ffe1a0" strokeWidth="2"/></>,
   plus: <path d="M12 5v14M5 12h14"/>,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 11h18"/></>,
   clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,

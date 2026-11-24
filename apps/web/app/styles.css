@@ -38,6 +38,10 @@ body { margin: 0; }
 }
 .site[lang="ar"] { --display: "Noto Naskh Arabic", Georgia, serif; }
 .site[data-theme="christmas"] {
+  --evergreen: #193a31;
+  --winter-night: #182b3b;
+  --candlelight: #ffd991;
+  --winter-cream: #fff5e4;
   --paper: #f7eee0;
   --surface: #fff9ee;
   --ink: #263d35;
@@ -89,6 +93,8 @@ h2 { font-size: clamp(1.62rem, 3vw, 2.15rem); letter-spacing: -.035em; }
 .utility.staff-link, .utility.logout { border: 1px solid var(--line); }
 .language span[lang="ar"] { font-family: "Noto Sans Arabic", sans-serif; }
 .site-footer { min-height: 62px; margin-block-start: auto; padding-block: .8rem; border-top: 1px solid var(--line); font-size: .82rem; color: var(--muted); }
+.brand-book { display: flex; }
+.brand-tree, .christmas-lights { display: none; }
 
 .entry { width: min(var(--max-width), calc(100% - 3rem)); margin: clamp(1.6rem, 4.5vh, 3.4rem) auto 3rem; display: grid; grid-template-columns: minmax(0, 1.52fr) minmax(19rem, 1fr); align-items: start; gap: clamp(2rem, 4.5vw, 4.8rem); }
 .welcome { align-self: start; display: grid; gap: 1.5rem; }
@@ -346,6 +352,98 @@ form .notice { margin-block: .35rem; }
 .site[data-theme="christmas"] .quiz-top strong { display: flex; align-items: center; gap: .4rem; }
 .site[data-theme="christmas"] .season-star { display: inline-flex; color: #efc57d; }
 .site[data-theme="christmas"] .quiz-top progress { accent-color: #efc57d; }
+
+[data-theme="christmas"] .site-header {
+  background: var(--evergreen);
+  color: var(--winter-cream);
+  border-color: #665b3b;
+}
+[data-theme="christmas"] .site-header :focus-visible { outline-color: var(--candlelight); }
+[data-theme="christmas"] .site-header .utility { border-color: #8c9683; }
+[data-theme="christmas"] .site-header .utility:hover { background: #294b40; }
+[data-theme="christmas"] .site-header .wordmark small { color: #ecd2a8; }
+[data-theme="christmas"] .brand-icon { background: #284b3e; color: #f6d69b; }
+[data-theme="christmas"] .brand-book { display: none; }
+[data-theme="christmas"] .brand-tree { display: inline-flex; align-items: center; flex: none; }
+[data-theme="christmas"] .christmas-lights {
+  display: flex;
+  direction: ltr;
+  flex: 1 1 18rem;
+  max-width: 23rem;
+  align-self: start;
+  pointer-events: none;
+}
+.christmas-lights > span {
+  flex: 1;
+  display: flex;
+  align-items: end;
+  justify-content: space-evenly;
+  height: 1.1rem;
+  border-bottom: 1px solid #a49871;
+  border-radius: 0 0 50% 50%;
+}
+.christmas-lights i {
+  width: 5px;
+  height: 9px;
+  border-radius: 2px 2px 50% 50%;
+  background: var(--candlelight);
+  margin-bottom: -7px;
+  box-shadow: 0 2px 9px #ffc96f99;
+}
+.christmas-lights i:nth-child(odd) { background: #fff0be; }
+.christmas-lights i:is(:first-child, :last-child) { margin-bottom: -4px; }
+.christmas-lights i:nth-child(3) { height: 10px; margin-bottom: -9px; }
+
+[data-theme="christmas"] .staff-board-heading { display: flex; align-items: center; gap: .55rem; }
+[data-theme="christmas"] .public-leaderboard { margin-block: clamp(1.25rem, 4vw, 2.6rem); }
+[data-theme="christmas"] .leaderboard-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(5.6rem, 34%);
+  align-items: stretch;
+  min-height: clamp(8.5rem, 18vw, 14rem);
+  overflow: hidden;
+  background: var(--winter-night);
+  color: var(--winter-cream);
+  border-radius: 12px;
+}
+[data-theme="christmas"] .leaderboard-heading h1 {
+  align-self: center;
+  padding: clamp(.9rem, 4vw, 3rem);
+  font-size: clamp(1.9rem, 4.2vw, 3.1rem);
+  overflow-wrap: anywhere;
+  text-align: match-parent;
+}
+.leaderboard-art {
+  background: var(--art) right 34% / auto 225% no-repeat;
+}
+[data-theme="christmas"] .public-leaderboard > .panel { margin-block-start: 0; }
+.leaderboard-back { border: 1px solid; }
+@media (max-width: 760px) {
+  [data-theme="christmas"] .header-inner {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 0 .45rem;
+    padding-block: .45rem .6rem;
+  }
+  [data-theme="christmas"] .christmas-lights {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-self: center;
+    width: min(100%, 21rem);
+    margin-block-end: .4rem;
+  }
+  [data-theme="christmas"] .christmas-lights > span { height: .6rem; }
+  .leaderboard-art { background-size: auto 175%; }
+  .leaderboard-back { max-width: 9rem; white-space: normal; text-align: center; line-height: 1.35; }
+}
+@media (max-width: 520px) {
+  [data-theme="christmas"] .public-leaderboard .roster-table :is(th, td) {
+    padding-inline: .45rem;
+    white-space: normal;
+  }
+  [data-theme="christmas"] .public-leaderboard .roster-table td:nth-child(2) { overflow-wrap: anywhere; }
+  [data-theme="christmas"] .public-leaderboard .roster-table td:last-child { white-space: nowrap; }
+}
 
 .record-actions .button[aria-pressed="true"] {
   border-color: var(--accent);
