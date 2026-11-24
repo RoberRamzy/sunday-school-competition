@@ -64,7 +64,7 @@ test('super admin issues and resets a one-time setup code and can delete the sta
   const engine = await browser();
   try {
     const staff = await adminSession(engine);
-    const username = 'qa-' + crypto.randomUUID();
+    const username = 'خادم الاختبار ' + crypto.randomUUID().slice(0,8);
     const name = 'QA Staff ' + username;
     const page = await staff.newPage();
     await page.goto('/staff');

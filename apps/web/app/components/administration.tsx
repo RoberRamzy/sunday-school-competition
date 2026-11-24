@@ -102,7 +102,8 @@ export function Administration({ t, language, currentStaffId }: { t: Translate; 
     </label>
     <form key={staffId} className="form-stack" onSubmit={e=>save(e,"servants")}>
       <label>{t("Full name","الاسم بالكامل")}<input name="fullName" required defaultValue={servant?.fullName}/></label>
-      <label>{t("Username","اسم المستخدم")}<input name="username" required defaultValue={servant?.username} dir="ltr" autoComplete="off"/></label>
+      <label>{t("Username","اسم المستخدم")}<input name="username" required defaultValue={servant?.username} dir="auto" autoComplete="off" aria-describedby="servant-username-note"/></label>
+      <p id="servant-username-note" className="note">{t("Use 3–64 characters. Arabic and English names with spaces are accepted.", "استخدم من ٣ إلى ٦٤ حرفًا. يمكن استخدام الأسماء العربية والإنجليزية مع المسافات.")}</p>
       <fieldset><legend>{t("Assigned grades","الصفوف المسندة")}</legend>{grades.map(g=><label key={g.id} style={{display:"flex",alignItems:"center",gap:8}}><input style={{width:"auto"}} type="checkbox" name="gradeIds" value={g.id} defaultChecked={servant?.gradeIds.includes(g.id)}/>{g.name}</label>)}</fieldset>
       {servant && <label>{t("Account status","حالة الحساب")}<select name="status" defaultValue={servant.status}><option value="ACTIVE">{t("Active","نشط")}</option><option value="SUSPENDED">{t("Suspended","موقوف")}</option></select></label>}
       <button disabled={busy} className="button primary">{staffId ? t("Save servant","حفظ الخادم") : t("Create servant and generate code","إنشاء حساب الخادم وإصدار رمز")}</button>

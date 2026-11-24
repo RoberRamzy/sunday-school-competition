@@ -156,12 +156,17 @@ test('staff scope, CSRF and input validation protect roster and appearance', { s
 });
 
 test('one-time servant setup and recovery reject expired, replaced and reused codes', { skip: !databaseUrl }, async () => {
-  const username = 'setup-servant';
+  const username = 'خادم الإعداد';
   const created = await request('/admin/servants', {
-    cookie: adminCookie, body: { fullName: 'Setup Servant', username, gradeIds: [grade1] },
+    cookie: adminCookie, body: { fullName: 'Setup Servant', username: '  خادم  الا\u0655عداد  ', gradeIds: [grade1] },
   });
   assert.equal(created.status, 201);
   const { id, setupCode, expiresAt } = await created.json() as { id: string; setupCode: string; expiresAt: string };
+  assert.equal((await db.adminUser.findUniqueOrThrow({ where: { id } })).username, username);
+  const duplicate = await request('/admin/servants', {
+    cookie: adminCookie, body: { fullName: 'Duplicate Servant', username, gradeIds: [grade1] },
+  });
+  assert.equal(duplicate.status, 409);
   assert.ok(Date.parse(expiresAt) > Date.now());
   assert.equal((await db.adminUser.findUniqueOrThrow({ where: { id } })).passwordHash, null);
   const setup = (code: string, password = '004201') =>

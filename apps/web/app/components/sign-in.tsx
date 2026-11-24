@@ -124,7 +124,7 @@ export function SignIn({ staff, theme, t, onSignIn }: {
           ? t("Use the one-time password given to you by your servant.", "استخدم كلمة المرور لمرة واحدة التي أعطاها لك خادمك.")
           : t("Choose your grade and name, then enter your six-digit PIN.", "اختر صفك واسمك، ثم أدخل رمزك المكوّن من ستة أرقام.")}</p>
       <form className="form-stack" key={mode} onSubmit={submit}>
-        {staff ? <label>{t("Username", "اسم المستخدم")}<input name="username" autoComplete="username" autoCapitalize="none" required disabled={busy} /></label> : <>
+        {staff ? <label>{t("Username", "اسم المستخدم")}<input name="username" autoComplete="username" autoCapitalize="none" dir="auto" required disabled={busy} /></label> : <>
           <label>{t("Grade", "الصف الدراسي")}
             <div className="select-wrap"><select value={gradeId} onChange={(event) => {
               const value = event.target.value;

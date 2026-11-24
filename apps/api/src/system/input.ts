@@ -21,7 +21,10 @@ export const bodyDocs = (schema: z.ZodType) => ApiBody({ schema: z.toJSONSchema(
 export const param = (name: string, schema = z.uuid()) => Param(name, new SchemaPipe(schema));
 export const query = (schema: z.ZodType) => Query(new SchemaPipe(schema));
 export const name = z.string().trim().min(1).max(150);
-export const username = z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9._-]{2,63}$/);
+export const username = z.string().trim().normalize("NFC").toLowerCase()
+  .overwrite(value => value.replace(/ +/g, ' '))
+  .min(3).max(64)
+  .regex(/^[\p{L}\p{Nd}][\p{L}\p{M}\p{Nd}._-]*(?: [\p{L}\p{Nd}][\p{L}\p{M}\p{Nd}._-]*)*$/u);
 export const newPassword = z.string().min(12).max(128);
 export const pin = z.string().regex(/^[0-9]{6}$/);
 export const empty = z.strictObject({}).default({});
