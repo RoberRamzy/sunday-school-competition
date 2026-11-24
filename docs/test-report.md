@@ -9,7 +9,8 @@ Local PostgreSQL 16, NestJS, Next.js and headless Chrome. Fixtures use synthetic
 | Browser acceptance through the production frontend | 4 passed on a freshly migrated database |
 | PostgreSQL dump and restore into a separate local database | Passed with 90 submitted attempts and 180.00 total points restored |
 | Local pilot load rehearsal | 30 and 90 concurrent synthetic student sessions passed |
-| Hosted provider URLs, event-size load and real phones | Pending the hosted pilot |
+| Hosted provider URLs and login | Vercel frontend and API verified against Neon |
+| Hosted event-size load and real phones | Pending |
 
 The API tests cover roster scope, activation reissue and reuse, session rotation, PIN throttling, valid competition windows, blueprint validation, concurrent starts, frozen questions, answer revisions, exact and partial sorting scores, timeout during a row-lock race, late writes, publication, export, and replacement rollback and retry.
 
@@ -27,3 +28,11 @@ The production frontend sent each burst through the same-origin API proxy to Nes
 | Save answer | 72 ms | 172 ms |
 | Resume | 62 ms | 143 ms |
 | Submit | 77 ms | 190 ms |
+
+## Hosted pilot login
+
+Both Prisma migrations applied on Neon. The live API readiness check passed. Playwright verified Excel handout, first activation, session replacement, leading-zero PIN login and logout through the Vercel frontend proxy. The synthetic account was suspended after testing.
+
+## Shared competition questions and leaderboards
+
+Applied the migration to a restored copy of the local pilot database and confirmed the roster, competition and attempt counts and total score were preserved. Eleven API checks and four browser checks passed. The browser created a shared question in the draft, saved and resumed an attempt, then published and withdrew an alias-only overall leaderboard. API tests covered dense ranks, scope isolation, legacy draft conversion and eligibility for the legacy overall board.

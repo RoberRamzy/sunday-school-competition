@@ -5,7 +5,7 @@ import { audit, gradeScope, lockStaff, StaffPrincipal } from '../auth/principal'
 import { Database, isDatabaseError } from '../database/database.module';
 import { AttemptService, lockCompetition } from './attempt.service';
 import {
-  category, competitionInfo, CompetitionInput, databaseTime, effectiveStatus, gradeSelections, snapshot, validateSetup,
+  category, competitionInfo, CompetitionInput, databaseTime, effectiveStatus, gradeSelections, snapshot, validateQuestion, validateSetup,
 } from './competition-data';
 import { competitionPatch } from './competition.input';
 
@@ -38,7 +38,20 @@ export class CompetitionService {
       });
       if (!row) throw new NotFoundException('Competition was not found');
       if (scope && (!row.grades.length || row.status === 'DRAFT')) throw new ForbiddenException();
-      return competitionInfo(row, await databaseTime(tx));
+      const info = competitionInfo(row, await databaseTime(tx));
+      if (actor.role !== 'SUPER_ADMIN' || row.status !== 'DRAFT') return info;
+      const ids = row.grades.flatMap(({ questions }) => questions.map(({ questionId }) => questionId));
+      const questions = new Map((await tx.question.findMany({ where: { id: { in: ids } } }))
+        .map(question => [question.id, snapshot(question)]));
+      const sets = row.grades.map(({ gradeId, questions: links }) => ({
+        gradeId, questions: links.flatMap(({ questionId }) => {
+          const question = questions.get(questionId);
+          if (!question) return [];
+          const { gradeId: _grade, ...fields } = question;
+          return [fields];
+        }),
+      }));
+      return row.sharedQuestions ? { ...info, questions: sets[0]?.questions ?? [] } : { ...info, legacyDraftSets: sets };
     });
   }
 
@@ -47,38 +60,75 @@ export class CompetitionService {
       return await this.db.$transaction(async (tx) => {
         await lockStaff(tx, actor);
         let data = input as CompetitionInput;
+        let sharedDraft = false;
         if (id) {
           const current = await lockCompetition(tx, id, true);
+          sharedDraft = current.sharedQuestions;
           if (current.status !== 'DRAFT') throw new ConflictException('Only a draft can be edited');
           const row = await tx.competition.findUniqueOrThrow({ where: { id }, include: { grades: gradeSelections } });
           const prior = competitionInfo(row, await databaseTime(tx));
           data = { ...prior, opensAt: prior.opensAt.toISOString(), closesAt: prior.closesAt.toISOString(), grades: prior.grades as CompetitionInput['grades'], ...input };
         }
-        validateSetup(data);
-        const { title, description, tiePolicy, instructions, opensAt, closesAt, durationMinutes, grades } = data;
+        if (data.gradeIds || data.questions) {
+          return this.saveShared(tx, actor, data, id);
+        }
+        if (!id || !data.grades || sharedDraft) {
+          throw new BadRequestException('Supply eligible grades and shared questions');
+        }
+        validateSetup({ ...data, grades: data.grades });
+        const { title, description, tiePolicy, instructions, opensAt, closesAt, durationMinutes } = data;
+        const grades = data.grades;
         await this.validateSelections(tx, grades);
         const scalar = { title, description, tiePolicy, instructions, opensAt: new Date(opensAt), closesAt: new Date(closesAt), durationMinutes };
         const gradeRecords = grades.map((grade) => ({
           gradeId: grade.gradeId, blueprint: grade.blueprint,
           questions: { create: grade.questionIds.map((questionId, position) => ({ questionId, position })) },
         }));
-        const row = id
-          ? await tx.competition.update({
-              where: { id }, data: { ...scalar, grades: { deleteMany: {}, create: gradeRecords } }, include: { grades: gradeSelections },
-            })
-          : await tx.competition.create({
-              data: { ...scalar, grades: { create: gradeRecords } }, include: { grades: gradeSelections },
-            });
-        await audit(tx, actor, id ? 'COMPETITION_UPDATED' : 'COMPETITION_CREATED', { competitionId: row.id });
+        const row = await tx.competition.update({
+          where: { id }, data: { ...scalar, grades: { deleteMany: {}, create: gradeRecords } }, include: { grades: gradeSelections },
+        });
+        await audit(tx, actor, 'COMPETITION_UPDATED', { competitionId: row.id });
         return competitionInfo(row, await databaseTime(tx));
       }, { timeout: 15000 });
     } catch (error) {
+      if (isDatabaseError(error, 'P2002')) throw new ConflictException('A question ID is already in use');
       if (isDatabaseError(error, 'P2003')) throw new NotFoundException('Selected grade or question was not found');
       throw error;
     }
   }
 
-  private async validateSelections(tx: Prisma.TransactionClient, grades: CompetitionInput['grades']) {
+  private async saveShared(tx: Prisma.TransactionClient, actor: StaffPrincipal, data: CompetitionInput, id?: string) {
+    const { gradeIds, questions, title, description, instructions, opensAt, closesAt, durationMinutes, tiePolicy } = data;
+    if (!gradeIds || !questions || new Set(gradeIds).size !== gradeIds.length ||
+        new Set(questions.map(question => question.id)).size !== questions.length) {
+      throw new BadRequestException('Supply unique grade IDs and a shared question list');
+    }
+    if (new Date(opensAt) >= new Date(closesAt)) throw new BadRequestException('Closing time must follow opening time');
+    if (await tx.grade.count({ where: { id: { in: gradeIds } } }) !== gradeIds.length) throw new BadRequestException('Unknown grade');
+    questions.forEach(validateQuestion);
+    const scalar = { title, description, instructions, opensAt: new Date(opensAt), closesAt: new Date(closesAt),
+      durationMinutes, tiePolicy, sharedQuestions: true };
+    const competition = id
+      ? await tx.competition.update({ where: { id }, data: scalar })
+      : await tx.competition.create({ data: scalar });
+    await tx.competitionGrade.deleteMany({ where: { competitionId: competition.id } });
+    await tx.question.deleteMany({ where: { competitionId: competition.id } });
+    await tx.question.createMany({
+      data: questions.map(question => ({ ...question, competitionId: competition.id, tags: question.tags ?? [] })),
+    });
+    const row = await tx.competition.update({
+      where: { id: competition.id },
+      data: { leaderboardScopes: competition.leaderboardScopes.filter(scope => scope === 'overall' || gradeIds.includes(scope)),
+        grades: { create: gradeIds.map(gradeId => ({
+        gradeId, blueprint: [], questions: { create: questions.map(({ id: questionId }, position) => ({ questionId, position })) },
+      })) } },
+      include: { grades: gradeSelections },
+    });
+    await audit(tx, actor, id ? 'COMPETITION_UPDATED' : 'COMPETITION_CREATED', { competitionId: row.id });
+    return { ...competitionInfo(row, await databaseTime(tx)), questions };
+  }
+
+  private async validateSelections(tx: Prisma.TransactionClient, grades: NonNullable<CompetitionInput['grades']>) {
     const gradeIds = grades.map((grade) => grade.gradeId);
     const questionIds = [...new Set(grades.flatMap((grade) => grade.questionIds))];
     const gradeCount = await tx.grade.count({ where: { id: { in: gradeIds } } });
@@ -88,7 +138,7 @@ export class CompetitionService {
     for (const grade of grades) {
       for (const questionId of grade.questionIds) {
         const question = byId.get(questionId);
-        if (!question || question.gradeId !== grade.gradeId || question.archived) {
+        if (!question || question.competitionId || question.gradeId !== grade.gradeId || question.archived) {
           throw new BadRequestException('Select active questions from the corresponding grade');
         }
       }
@@ -105,7 +155,7 @@ export class CompetitionService {
         throw new ConflictException('Only a draft with a future closing time can be activated');
       }
       const row = await tx.competition.findUniqueOrThrow({ where: { id }, include: { grades: gradeSelections } });
-      const grades = competitionInfo(row, now).grades as CompetitionInput['grades'];
+      const grades = competitionInfo(row, now).grades as NonNullable<CompetitionInput['grades']>;
       const ids = [...new Set(grades.flatMap((grade) => grade.questionIds))];
       if (ids.length) {
         await tx.$queryRaw`
@@ -113,9 +163,13 @@ export class CompetitionService {
           ORDER BY id FOR SHARE
         `;
       }
-      const byId = await this.validateSelections(tx, grades);
+      if (row.sharedQuestions && (!grades.length || !ids.length)) throw new BadRequestException('Add at least one question');
+      const byId = row.sharedQuestions
+        ? new Map((await tx.question.findMany({ where: { id: { in: ids }, competitionId: id } })).map(question => [question.id, question]))
+        : await this.validateSelections(tx, grades);
+      if (byId.size !== ids.length) throw new BadRequestException('Invalid shared question selection');
       const errors: string[] = [];
-      for (const grade of grades) {
+      for (const grade of row.sharedQuestions ? [] : grades) {
         const expected = new Map(grade.blueprint.map((rule) => [category(rule), rule.count]));
         const actual = new Map<string, number>();
         for (const questionId of grade.questionIds) {

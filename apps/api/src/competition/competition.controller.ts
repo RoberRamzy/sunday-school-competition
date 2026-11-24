@@ -1,4 +1,4 @@
-import { Controller, Delete, Get, HttpCode, Patch, Post, StreamableFile } from '@nestjs/common';
+import { Controller, Get, HttpCode, Patch, Post, StreamableFile } from '@nestjs/common';
 import { ApiCookieAuth, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { Actor, Roles } from '../auth/principal';
@@ -7,41 +7,10 @@ import { body, bodyDocs, empty, param, query } from '../system/input';
 import { AttemptService } from './attempt.service';
 import type { StudentPrincipal } from './attempt.service';
 import {
-  answerInput, competitionInput, competitionPatch, exportFilter, questionFilters, questionInput, questionPatch, reasonInput,
+  answerInput, sharedCompetitionInput, competitionPatch, exportFilter, reasonInput,
 } from './competition.input';
 import { CompetitionService } from './competition.service';
-import { QuestionService } from './question.service';
 import { ResultsService } from './results.service';
-
-@ApiTags('Question bank')
-@ApiCookieAuth('sid')
-@Roles('SUPER_ADMIN')
-@Controller('admin/questions')
-export class QuestionController {
-  constructor(private readonly questions: QuestionService) {}
-
-  @Get()
-  list(@query(questionFilters) filters: z.infer<typeof questionFilters>) {
-    return this.questions.list(filters);
-  }
-
-  @Post()
-  @bodyDocs(questionInput)
-  create(@Actor() actor: StaffPrincipal, @body(questionInput) input: z.infer<typeof questionInput>) {
-    return this.questions.create(actor, input);
-  }
-
-  @Patch(':id')
-  @bodyDocs(questionPatch)
-  update(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(questionPatch) input: z.infer<typeof questionPatch>) {
-    return this.questions.update(actor, id, input);
-  }
-
-  @Delete(':id')
-  async archive(@Actor() actor: StaffPrincipal, @param('id') id: string) {
-    return this.questions.update(actor, id, {}, true);
-  }
-}
 
 @ApiTags('Competition management')
 @ApiCookieAuth('sid')
@@ -62,8 +31,8 @@ export class CompetitionController {
 
   @Post()
   @Roles('SUPER_ADMIN')
-  @bodyDocs(competitionInput)
-  create(@Actor() actor: StaffPrincipal, @body(competitionInput) input: z.infer<typeof competitionInput>) {
+  @bodyDocs(sharedCompetitionInput)
+  create(@Actor() actor: StaffPrincipal, @body(sharedCompetitionInput) input: z.infer<typeof sharedCompetitionInput>) {
     return this.competitions.save(actor, input);
   }
 

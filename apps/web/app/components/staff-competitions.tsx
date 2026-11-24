@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, json, type Grade, type Language, type Translate } from "../api";
-import { displayDate, statusText, type BankQuestion, type StaffCompetition } from "../competition";
+import { displayDate, statusText, type StaffCompetition } from "../competition";
 import { CompetitionEditor } from "./competition-editor";
+import { AdminLeaderboard } from "./leaderboard";
 import { CompetitionMonitor } from "./competition-monitor";
 import { Icon } from "./ui-icon";
 
@@ -12,8 +13,8 @@ type Action = "activate" | "close" | "publish" | "archive";
 export function StaffCompetitions({ admin, language, t }: { admin: boolean; language: Language; t: Translate }) {
   const [competitions, setCompetitions] = useState<StaffCompetition[] | null>(null);
   const [grades, setGrades] = useState<Grade[]>([]);
-  const [questions, setQuestions] = useState<BankQuestion[] | null>(null);
   const [detail, setDetail] = useState<StaffCompetition | null>(null);
+  const [showLeaderboard, setShowLeaderboard] = useState(false);
   const [editing, setEditing] = useState(false);
   const [action, setAction] = useState<Action | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -40,6 +41,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
     setBusy(true);
     try {
       setDetail(await api<StaffCompetition>(`/admin/competitions/${id}`));
+      setShowLeaderboard(false);
     } catch (error) {
       setError(error);
     } finally {
@@ -47,17 +49,9 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
     }
   }
 
-  async function edit() {
+  function edit() {
     setError(null);
-    setBusy(true);
-    try {
-      setQuestions(await api<BankQuestion[]>("/admin/questions"));
-      setEditing(true);
-    } catch (error) {
-      setError(error);
-    } finally {
-      setBusy(false);
-    }
+    setEditing(true);
   }
 
   async function runAction() {
@@ -83,7 +77,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
     archive: t("Archive competition", "أرشفة المسابقة"),
   };
   const actionHelp: Record<Action, string> = {
-    activate: t("Activation freezes each grade’s question set and scoring. Students can start when the competition opens.", "يثبّت التفعيل أسئلة كل صف وطريقة التصحيح. يمكن للطلاب البدء عند فتح المسابقة."),
+    activate: t("Activation freezes the question set and scoring. Students can start when the competition opens.", "يثبّت التفعيل الأسئلة وطريقة التصحيح. يمكن للطلاب البدء عند فتح المسابقة."),
     close: t("Closing ends access and finalizes any outstanding attempts.", "يُنهي الإغلاق الوصول إلى المسابقة ويُتم المحاولات الجارية."),
     publish: t("Students and assigned servants will be able to view their results.", "سيتمكن الطلاب والخدام المعيّنون من الاطلاع على نتائجهم."),
     archive: t("Archiving takes the competition off the available list. Students who attempted it can still see its published results.", "تزيل الأرشفة المسابقة من قائمة المسابقات المتاحة. يمكن لمن شارك الاطلاع على نتائجه المنشورة."),
@@ -95,7 +89,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
     </div>
     <p className="subtle section-description">{admin ? t("Set up competitions, monitor attempts, and publish results.", "أعد المسابقات وتابع المحاولات وانشر النتائج.") : t("Monitor participation and see published results for your grades.", "تابع المشاركة والنتائج المنشورة لصفوفك.")}</p>
     {error ? <p role="alert" className="notice error">{errorText(error, t)}{" "}{!competitions && <button className="link-button" type="button" onClick={load}>{t("Try again", "حاول مجددًا")}</button>}</p> : null}
-    {editing && questions ? <CompetitionEditor competition={detail} grades={grades} questions={questions} t={t} onCancel={() => setEditing(false)} onSave={(saved) => {
+    {editing ? <CompetitionEditor competition={detail} grades={grades} t={t} onCancel={() => setEditing(false)} onSave={(saved) => {
       setEditing(false); void open(saved.id); void load();
     }}/> : detail ? <>
       <button className="link-button" type="button" disabled={busy} onClick={() => { setDetail(null); setAction(null); setError(null); void load(); }}>{t("All competitions", "كل المسابقات")}</button>
@@ -120,7 +114,14 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
           </div>
         </div>}
       </article>
-      {detail.status !== "DRAFT" && <CompetitionMonitor key={detail.id} competition={detail} grades={grades} admin={admin} language={language} t={t}/>}
+      {(admin || detail.status !== "DRAFT") && <>
+        {admin && <nav className="record-actions" aria-label={t("Competition dashboard", "لوحة المسابقة")}>
+          {detail.status !== "DRAFT" && <button className="button" type="button" aria-pressed={!showLeaderboard} onClick={() => setShowLeaderboard(false)}>{t("Monitoring and results", "المتابعة والنتائج")}</button>}
+          <button className="button" type="button" aria-pressed={showLeaderboard} onClick={() => setShowLeaderboard(true)}>{t("Leaderboards", "لوحات الترتيب")}</button>
+        </nav>}
+        {admin && showLeaderboard ? <AdminLeaderboard key={detail.id} id={detail.id} t={t}/> :
+          <>{detail.status !== "DRAFT" && <CompetitionMonitor key={detail.id} competition={detail} grades={grades} admin={admin} language={language} t={t}/>}</>}
+      </>}
     </> : competitions === null ? !error && <p role="status">{t("Loading competitions…", "جارٍ تحميل المسابقات…")}</p>
     : competitions.length ? <div className="competition-list">{competitions.map((item) => <article className="panel competition-card" key={item.id}>
       <div className="card-heading"><h2 dir="auto">{item.title}</h2><span className="status" data-status={item.status}>{statusText(item.status, t)}</span></div>

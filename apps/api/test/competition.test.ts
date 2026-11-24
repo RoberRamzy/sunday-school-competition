@@ -64,14 +64,14 @@ function minute(offset: number) {
 
 async function fixtures() {
   const items = ['A', 'B', 'C', 'D'].map((text) => ({ id: randomUUID(), text }));
-  const mcq = await ok<{ id: string }>(request('/admin/questions', admin, {
-    gradeId, type: 'MCQ', difficulty: 'EASY', points: 2, text: 'Multiple choice', items,
+  const mcq = await db.question.create({ data: {
+    gradeId, type: 'MCQ', difficulty: 'EASY', points: 2, text: 'Multiple choice', items, tags: [],
     correctOrder: [items[0].id], sortingMode: 'EXACT',
-  }));
-  const sorting = await ok<{ id: string }>(request('/admin/questions', admin, {
-    gradeId, type: 'SORTING', difficulty: 'MEDIUM', points: 5, text: 'Sorting', items,
+  } });
+  const sorting = await db.question.create({ data: {
+    gradeId, type: 'SORTING', difficulty: 'MEDIUM', points: 5, text: 'Sorting', items, tags: [],
     correctOrder: items.map((item) => item.id), sortingMode: 'PARTIAL',
-  }));
+  } });
   const draft = {
     title: 'Pilot', instructions: 'Complete the quiz', opensAt: minute(-1), closesAt: minute(10),
     durationMinutes: 30,
@@ -83,8 +83,19 @@ async function fixtures() {
   return { draft, items, mcq, sorting };
 }
 
+async function legacyDraft(draft: Awaited<ReturnType<typeof fixtures>>['draft']) {
+  const { grades, opensAt, closesAt, ...fields } = draft;
+  return db.competition.create({
+    data: { ...fields, opensAt: new Date(opensAt), closesAt: new Date(closesAt), grades: {
+      create: grades.map(({ gradeId, blueprint, questionIds }) => ({
+        gradeId, blueprint, questions: { create: questionIds.map((questionId, position) => ({ questionId, position })) },
+      })),
+    } },
+  });
+}
+
 async function makeCompetition(draft: Awaited<ReturnType<typeof fixtures>>['draft']) {
-  const { id } = await ok<{ id: string }>(request('/admin/competitions', admin, draft));
+  const { id } = await legacyDraft(draft);
   await ok(request(`/admin/competitions/${id}/activate`, admin, {}));
   return id;
 }
@@ -156,9 +167,9 @@ test('shuffle respects controlled draws without mutating original order', () => 
 
 test('windows, blueprint, concurrent start, reconnect, replay and frozen scores', { skip: !databaseUrl }, async () => {
   const { draft, items, mcq, sorting } = await fixtures();
-  const { id: badId } = await ok<{ id: string }>(request('/admin/competitions', admin, {
+  const { id: badId } = await legacyDraft({
     ...draft, grades: [{ ...draft.grades[0], questionIds: [mcq.id] }],
-  }));
+  });
   assert.equal((await request(`/admin/competitions/${badId}/activate`, admin, {})).status, 400);
   await ok(request(`/admin/competitions/${badId}`, admin, { grades: draft.grades }, 'PATCH'));
 
@@ -185,8 +196,8 @@ test('windows, blueprint, concurrent start, reconnect, replay and frozen scores'
   assert.equal((await request(`/student/attempts/${started[0].id}`, b.cookie)).status, 404);
   assert.equal((await request(`/admin/attempts/${started[0].id}`, servant)).status, 403);
 
-  await ok(request(`/admin/questions/${mcq.id}`, admin, { correctOrder: [items[1].id], text: 'Changed', points: 8 }, 'PATCH'));
-  await ok(request(`/admin/questions/${sorting.id}`, admin, {}, 'DELETE'));
+  await db.question.update({ where: { id: mcq.id }, data: { correctOrder: [items[1].id], text: 'Changed', points: 8 } });
+  await db.question.update({ where: { id: sorting.id }, data: { archived: true } });
   const other = await ok<ResponseState>(request(start, b.cookie, {}));
   const stored = await db.attemptQuestion.findMany({
     where: { attemptId: { in: [started[0].id, other.id] } },
@@ -346,7 +357,7 @@ test('replacement transaction rolls back and a retried authorization starts exac
 
 test('exact sorting awards zero for a partial order, and skipped questions stay unanswered', { skip: !databaseUrl }, async () => {
   const { draft, sorting, items } = await fixtures();
-  await ok(request(`/admin/questions/${sorting.id}`, admin, { sortingMode: 'EXACT' }, 'PATCH'));
+  await db.question.update({ where: { id: sorting.id }, data: { sortingMode: 'EXACT' } });
   const competitionId = await makeCompetition(draft);
   const { cookie } = students[0];
   let state = await ok<ResponseState>(request(`/competitions/${competitionId}/start`, cookie, {}));
@@ -360,4 +371,112 @@ test('exact sorting awards zero for a partial order, and skipped questions stay 
   assert.equal(Number(result.score), 0);
   assert.equal(result.incorrectCount, 1);
   assert.equal(result.unansweredCount, 1);
+});
+
+type Standing = { rank: number; alias: string; grade: string; score: number; maxScore: number; name?: string };
+type Board = { scope: string; rows: Standing[] };
+type Leaderboard = { overallAvailable: boolean; boards: Board[]; scopes: string[]; published: boolean;
+  revision: string; publication: { title: string; boards: Board[] } };
+
+test('shared draft questions and dense overall and grade leaderboards use explicit publication', { skip: !databaseUrl }, async () => {
+  const items = ['Blue', 'Red'].map(text => ({ id: randomUUID(), text }));
+  const questions = [1, 2].map(points => ({
+    id: randomUUID(), type: 'MCQ', difficulty: 'EASY', text: `Choose blue for ${points} points`,
+    points, items, correctOrder: [items[0].id], sortingMode: 'PARTIAL',
+  }));
+  const draft = {
+    title: 'Shared quiz', instructions: '', opensAt: minute(-1), closesAt: minute(10), durationMinutes: 8,
+    gradeIds: [gradeId, otherGrade], questions,
+  };
+  const { id } = await ok<{ id: string }>(request('/admin/competitions', admin, draft));
+  const independent = await ok<{ id: string }>(request('/admin/competitions', admin, {
+    ...draft, questions: questions.map(q => ({ ...q, id: randomUUID(), points: 9 })),
+  }));
+  const staff = `/admin/competitions/${id}`;
+  const boards = staff + '/leaderboard';
+  const publicPath = `/leaderboards/${id}`;
+  assert.notEqual(id, independent.id);
+  const stored = await db.question.findMany({ where: { competitionId: id } });
+  assert.deepEqual(stored.map(q => q.points).sort(), [1, 2]);
+  assert.equal((await request(publicPath)).status, 404);
+  assert.equal((await request(boards, servant)).status, 403);
+
+  await ok(request(staff + '/activate', admin, {}));
+  assert.equal((await request(staff, admin, draft, 'PATCH')).status, 409);
+  assert.equal((await request('/admin/questions/' + questions[0].id, admin, { points: 100 }, 'PATCH')).status, 404);
+  const attempts = await Promise.all(students.map(({ cookie }) =>
+    ok<ResponseState>(request(`/competitions/${id}/start`, cookie, {}))));
+  for (const [index, attempt] of attempts.entries()) {
+    const quiz = await db.attemptQuestion.findMany({ where: { attemptId: attempt.id }, select: { questionId: true } });
+    assert.deepEqual(quiz.map(row => row.questionId).sort(), questions.map(q => q.id).sort());
+    const resumed = await ok<ResponseState>(request(`/student/attempts/${attempt.id}`, students[index].cookie));
+    assert.deepEqual(resumed.question, attempt.question);
+  }
+  await ok(request(boards, admin, { scopes: [gradeId], tiePolicy: 'SCORE_ONLY' }, 'PUT'));
+  const early = await ok<Leaderboard>(request(boards, admin));
+  assert.equal((await request(boards + '/publish', admin, { revision: early.revision })).status, 409);
+
+  const points = [3, 2, 2, 1, 0, 3];
+  for (const [index, attempt] of attempts.entries()) {
+    const startedAt = new Date(Date.now() - 10000);
+    const finishedAt = new Date(startedAt.getTime() + (index === 5 ? 1000 : 2000));
+    await db.attempt.update({ where: { id: attempt.id }, data: {
+      status: 'SUBMITTED', score: points[index], startedAt, finishedAt, submittedAt: finishedAt,
+    } });
+  }
+  await ok(request(staff + '/close', admin, {}));
+  const first = await ok<Leaderboard>(request(boards, admin));
+  assert.deepEqual(first.boards.find(board => board.scope === 'overall')?.rows.map(row => row.rank), [1, 1, 2, 2, 3, 4]);
+  assert.deepEqual(first.boards.find(board => board.scope === otherGrade)?.rows.map(row => row.rank), [1]);
+  await ok(request(boards + '/publish', admin, { revision: first.revision }));
+  const gradePublic = await ok<Leaderboard['publication']>(request(publicPath));
+  assert.deepEqual(gradePublic, first.publication);
+  assert.deepEqual(gradePublic.boards.map(board => board.scope), [gradeId]);
+  assert.equal((await request(boards, admin, { scopes: ['overall'], tiePolicy: 'SCORE_THEN_TIME' }, 'PUT')).status, 409);
+  const result = await ok<{ result: unknown }>(request(`/student/competitions/${id}`, students[0].cookie));
+  assert.equal(result.result, null);
+
+  await ok(request(boards + '/unpublish', admin, {}));
+  assert.equal((await request(publicPath)).status, 404);
+  const withTime = await ok<Leaderboard>(request(boards, admin, { scopes: ['overall'], tiePolicy: 'SCORE_THEN_TIME' }, 'PUT'));
+  assert.equal((await request(boards + '/publish', admin, { revision: first.revision })).status, 409);
+  const rows = withTime.boards.find(board => board.scope === 'overall')!.rows;
+  assert.equal(rows[0].name, 'Student 5');
+  assert.deepEqual(rows.map(row => row.rank), [1, 2, 3, 3, 4, 5]);
+  await ok(request(boards + '/publish', admin, { revision: withTime.revision }));
+  const body = await ok<Leaderboard['publication']>(request(publicPath));
+  assert.deepEqual(body, withTime.publication);
+  const publicRows = body.boards[0].rows;
+  assert.ok(publicRows.every(row => typeof row.alias === 'string' && !('name' in row) && !('studentId' in row)));
+  assert.deepEqual(publicRows[1].alias, gradePublic.boards[0].rows[0].alias);
+});
+
+test('legacy grades require matching frozen questions for Overall and drafts can be copied to shared questions', { skip: !databaseUrl }, async () => {
+  const { draft, mcq, sorting } = await fixtures();
+  const { id: _id, gradeId: _grade, competitionId: _owner, createdAt: _created, updatedAt: _updated, ...fields } = mcq;
+  const otherQuestion = await db.question.create({ data: {
+    ...fields, items: mcq.items as { id: string; text: string }[], gradeId: otherGrade, points: mcq.points + 1,
+  } });
+  const oldDraft = {
+    ...draft,
+    grades: [...draft.grades, { gradeId: otherGrade, questionIds: [otherQuestion.id],
+      blueprint: [{ type: 'MCQ', difficulty: 'EASY', count: 1 }] }],
+  };
+  const existing = await makeCompetition(oldDraft);
+  const oldBoards = await ok<Leaderboard>(request(`/admin/competitions/${existing}/leaderboard`, admin));
+  assert.equal(oldBoards.overallAvailable, false);
+  assert.deepEqual(new Set(oldBoards.boards.map(board => board.scope)), new Set([gradeId, otherGrade]));
+
+  const { id } = await legacyDraft(oldDraft);
+  const path = `/admin/competitions/${id}`;
+  const source = await ok<{ legacyDraftSets: { gradeId: string; questions: { id: string }[] }[] }>(request(path, admin));
+  const selected = source.legacyDraftSets.find(grade => grade.gradeId === gradeId)!;
+  assert.deepEqual(selected.questions.map(question => question.id), [mcq.id, sorting.id]);
+  await ok(request(path, admin, {
+    gradeIds: [gradeId, otherGrade], questions: selected.questions.map(question => ({ ...question, id: randomUUID() })),
+  }, 'PATCH'));
+  await ok(request(path + '/activate', admin, {}));
+  const converted = await ok<Leaderboard>(request(path + '/leaderboard', admin));
+  assert.equal(converted.overallAvailable, true);
+  assert.ok(await db.question.findUnique({ where: { id: mcq.id } }));
 });

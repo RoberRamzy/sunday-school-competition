@@ -4,15 +4,12 @@ import { Workbook } from 'exceljs';
 import { gradeScope, lockStaff, StaffPrincipal } from '../auth/principal';
 import { Database } from '../database/database.module';
 import { AttemptService, lockCompetition, lockStudent, StudentPrincipal } from './attempt.service';
+import { denseRanking } from './ranking';
 import { databaseTime, effectiveStatus } from './competition-data';
 
 type Tx = Prisma.TransactionClient;
 const rankingFields = { id: true, gradeId: true, studentId: true, score: true, maxScore: true, startedAt: true, finishedAt: true } as const;
 type Ranked = Pick<Attempt, keyof typeof rankingFields>;
-
-function elapsed(attempt: Ranked) {
-  return (attempt.finishedAt?.getTime() ?? 0) - (attempt.startedAt?.getTime() ?? 0);
-}
 
 function rankAttempts(attempts: Ranked[], tiePolicy: TiePolicy) {
   const groups = new Map<string, Ranked[]>();
@@ -23,15 +20,7 @@ function rankAttempts(attempts: Ranked[], tiePolicy: TiePolicy) {
   }
   const ranks = new Map<string, number>();
   for (const group of groups.values()) {
-    const compare = (a: Ranked, b: Ranked) => Number(b.score) - Number(a.score) ||
-      (tiePolicy === 'SCORE_THEN_TIME' ? elapsed(a) - elapsed(b) : 0);
-    group.sort(compare);
-    let rank = 1;
-    group.forEach((attempt, index) => {
-      const prior = group[index - 1];
-      if (prior && compare(prior, attempt) !== 0) rank = index + 1;
-      ranks.set(attempt.id, rank);
-    });
+    for (const { attempt, rank } of denseRanking(group, tiePolicy)) ranks.set(attempt.id, rank);
   }
   return ranks;
 }

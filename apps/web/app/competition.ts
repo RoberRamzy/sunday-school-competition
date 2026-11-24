@@ -14,14 +14,15 @@ export type StudentCompetition = {
   questionCount: number; status: string; attemptId: string | null; attemptStatus: AttemptStatus | null;
   result: { score: number; maxScore: number; rank: number } | null;
 };
-export type BankQuestion = Question & {
-  gradeId: string; difficulty: Difficulty; points: number; correctOrder: string[];
-  sortingMode: "PARTIAL" | "EXACT"; archived: boolean; explanation?: string; tags?: string[];
+export type CompetitionQuestion = Question & {
+  difficulty: Difficulty; points: number; correctOrder: string[];
+  sortingMode: "PARTIAL" | "EXACT"; explanation?: string; tags?: string[];
 };
 export type Blueprint = { type: QuestionType; difficulty: Difficulty; count: number };
 export type CompetitionGrade = { gradeId: string; questionIds: string[]; blueprint: Blueprint[] };
 export type StaffCompetition = {
   id: string; title: string; description?: string; instructions: string; opensAt: string; closesAt: string; durationMinutes: number;
+  sharedQuestions: boolean; questions?: CompetitionQuestion[]; legacyDraftSets?: { gradeId: string; questions: CompetitionQuestion[] }[];
   status: string; publishedAt: string | null; grades: CompetitionGrade[]; tiePolicy?: "SCORE_THEN_TIME" | "SCORE_ONLY";
 };
 

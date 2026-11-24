@@ -1,9 +1,9 @@
 import { BadRequestException } from '@nestjs/common';
 import { Competition, Prisma, Question } from '@prisma/client';
 import { z } from 'zod';
-import { competitionInput, questionInput, snapshotInput, Snapshot } from './competition.input';
+import { competitionInput, ownedQuestionInput, snapshotInput, Snapshot } from './competition.input';
 
-export function validateQuestion(input: z.infer<typeof questionInput>) {
+export function validateQuestion(input: Pick<z.infer<typeof ownedQuestionInput>, 'type' | 'items' | 'correctOrder'>) {
   const ids = new Set(input.items.map((item) => item.id));
   const keys = new Set(input.correctOrder);
   if (ids.size !== input.items.length || keys.size !== input.correctOrder.length ||
@@ -26,9 +26,9 @@ export const gradeSelections = {
 export function competitionInfo(competition: Competition & {
   grades: Prisma.CompetitionGradeGetPayload<{ include: typeof gradeSelections.include }>[];
 }, now: Date) {
-  const { id, title, description, instructions, opensAt, closesAt, durationMinutes, publishedAt, tiePolicy } = competition;
+  const { id, title, description, instructions, opensAt, closesAt, durationMinutes, publishedAt, tiePolicy, sharedQuestions } = competition;
   return {
-    id, title, description, instructions, opensAt, closesAt, durationMinutes, publishedAt, tiePolicy,
+    id, title, description, instructions, opensAt, closesAt, durationMinutes, publishedAt, tiePolicy, sharedQuestions,
     status: effectiveStatus(competition, now),
     grades: competition.grades.map((grade) => ({
       gradeId: grade.gradeId, blueprint: grade.blueprint, questionIds: grade.questions.map((row) => row.questionId),
@@ -44,7 +44,7 @@ export function effectiveStatus(competition: Pick<Competition, 'status' | 'opens
 
 export type CompetitionInput = z.infer<typeof competitionInput>;
 
-export function validateSetup(input: CompetitionInput) {
+export function validateSetup(input: CompetitionInput & { grades: NonNullable<CompetitionInput['grades']> }) {
   if (new Date(input.opensAt) >= new Date(input.closesAt)) throw new BadRequestException('Closing time must follow opening time');
   const grades = new Set(input.grades.map((grade) => grade.gradeId));
   if (grades.size !== input.grades.length) throw new BadRequestException('Configure each grade only once');

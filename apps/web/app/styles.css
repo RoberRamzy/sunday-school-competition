@@ -346,3 +346,9 @@ form .notice { margin-block: .35rem; }
 .site[data-theme="christmas"] .quiz-top strong { display: flex; align-items: center; gap: .4rem; }
 .site[data-theme="christmas"] .season-star { display: inline-flex; color: #efc57d; }
 .site[data-theme="christmas"] .quiz-top progress { accent-color: #efc57d; }
+
+.record-actions .button[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: var(--tint);
+  color: var(--accent);
+}

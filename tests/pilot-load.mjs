@@ -60,16 +60,16 @@ book.worksheets[0].eachRow((row, index) => {
 });
 
 const correct = crypto.randomUUID();
-const question = await admin('/admin/questions', {
-  gradeId: grade.id, type: 'MCQ', difficulty: 'EASY', text: 'Pick blue.', points: 2,
+const question = {
+  id: crypto.randomUUID(), type: 'MCQ', difficulty: 'EASY', text: 'Pick blue.', points: 2,
   items: [{id: correct, text: 'Blue'}, {id: crypto.randomUUID(), text: 'Red'}],
   correctOrder: [correct], sortingMode: 'PARTIAL',
-});
+};
 const now = Date.now();
 const competition = await admin('/admin/competitions', {
   title: prefix, instructions: 'Choose an answer.',
   opensAt: new Date(now - 1000).toISOString(), closesAt: new Date(now + 300000).toISOString(), durationMinutes: 3,
-  grades: [{gradeId: grade.id, questionIds: [question.id], blueprint: [{type: 'MCQ', difficulty: 'EASY', count: 1}]}],
+  gradeIds: [grade.id], questions: [question],
 });
 const staffPath = '/admin/competitions/' + competition.id;
 await admin(staffPath + '/activate', {});

@@ -6,24 +6,40 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
   const engine = await browser();
   const admin = await adminSession(engine);
   const originalTheme = await (await success(await api(admin,'/appearance'))).json();
+  let fixtureStudentId;
+  let fixtureCompetition;
   try {
     const {student,grade,pin,activationCode} = await studentFixture(admin);
+    fixtureStudentId = student.id;
     const alice = await context(engine,{viewport:{width:390,height:844}});
     await success(await api(alice,'/auth/activate','POST',{gradeId:grade.id,studentId:student.id,pin,activationCode}));
     const create = async (route,data) => (await success(await api(admin,route,'POST',data))).json();
-    const red = crypto.randomUUID();
-    const blue = crypto.randomUUID();
-    const question = await create('/admin/questions',{
-      gradeId:grade.id,type:'MCQ',difficulty:'EASY',text:'Select blue.',points:2,
-      items:[{id:red,text:'Red'},{id:blue,text:'Blue'}],correctOrder:[blue],sortingMode:'PARTIAL'
-    });
     const title = 'QA competition '+crypto.randomUUID();
-    const draft = await create('/admin/competitions',{
-      title,instructions:'Select the matching answer.',opensAt:new Date(Date.now()-60_000).toISOString(),
-      closesAt:new Date(Date.now()+600_000).toISOString(),durationMinutes:5,
-      grades:[{gradeId:grade.id,questionIds:[question.id],blueprint:[{type:'MCQ',difficulty:'EASY',count:1}]}]
-    });
+    const staffPage = await admin.newPage();
+    await staffPage.goto('/staff');
+    await staffPage.getByRole('button',{name:'Competitions',exact:true}).click();
+    await staffPage.getByRole('button',{name:'Create competition'}).click();
+    await staffPage.getByLabel('Title',{exact:true}).fill(title);
+    const localTime = offset => {
+      const date = new Date(Date.now() + offset);
+      return new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0,16);
+    };
+    await staffPage.getByLabel('Opening time').fill(localTime(-60000));
+    await staffPage.getByLabel('Closing time').fill(localTime(600000));
+    await staffPage.getByRole('checkbox',{name:grade.name,exact:true}).check();
+    await staffPage.getByRole('button',{name:'Add question',exact:true}).click();
+    await staffPage.getByLabel('Question text').fill('Select blue.');
+    await staffPage.getByLabel('Points',{exact:true}).fill('2');
+    await staffPage.getByLabel('Answer item 1').fill('Red');
+    await staffPage.getByLabel('Answer item 2').fill('Blue');
+    await staffPage.getByLabel('Choice 2 is correct').check();
+    await staffPage.getByRole('button',{name:'Save question'}).click();
+    const created = staffPage.waitForResponse(response => response.url().endsWith('/api/admin/competitions') && response.request().method()==='POST');
+    await staffPage.getByRole('button',{name:'Save draft'}).click();
+    const draft = await (await success(await created)).json();
     const competition = '/admin/competitions/'+draft.id;
+    fixtureCompetition = competition;
+    const blue = draft.questions[0].correctOrder[0];
     await create(competition+'/activate',{});
     const start = async()=> (await success(await api(alice,'/competitions/'+draft.id+'/start','POST',{}))).json();
     const [attempt,retry] = await Promise.all([start(),start()]);
@@ -71,8 +87,39 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     await create(competition+'/publish',{});
     const after=await (await success(await api(alice,'/student/competitions/'+draft.id))).json();
     assert.deepEqual(after.result,{score:2,maxScore:2,rank:1});
+    await staffPage.reload();
+    await staffPage.getByRole('button',{name:'Competitions',exact:true}).click();
+    await staffPage.getByRole('article').filter({hasText:title}).getByRole('button',{name:'Open competition'}).click();
+    await staffPage.getByRole('button',{name:'Leaderboards',exact:true}).click();
+    await staffPage.getByRole('checkbox',{name:'Publish Overall'}).check();
+    await staffPage.getByRole('button',{name:'Save leaderboard settings'}).click();
+    await staffPage.getByRole('button',{name:'Publish leaderboard',exact:true}).click();
+    const publicLink = staffPage.getByRole('link',{name:'Open public leaderboard'});
+    await publicLink.waitFor();
+    const visitor = await context(engine,{viewport:{width:390,height:844}});
+    const publicPage = await visitor.newPage();
+    const publicPath = await publicLink.getAttribute('href');
+    await publicPage.goto(publicPath);
+    await publicPage.getByRole('heading',{name:title}).waitFor();
+    const publicTable = publicPage.getByRole('table');
+    assert.match(await publicTable.innerText(),/Player [A-F0-9]{20}/);
+    assert.ok(!(await publicTable.innerText()).includes(student.displayLabel));
+    await staffPage.getByRole('button',{name:'Unpublish leaderboard'}).click();
+    await publicLink.waitFor({state:'hidden'});
+    await publicPage.reload();
+    await publicPage.getByText('This leaderboard is unavailable.').waitFor();
+
   } finally {
-    await api(admin,'/admin/appearance','PUT',originalTheme);
-    await engine.close();
+    try {
+      if (fixtureCompetition) {
+        await api(admin,fixtureCompetition+'/leaderboard/unpublish','POST',{});
+        await api(admin,fixtureCompetition+'/close','POST',{});
+        await api(admin,fixtureCompetition+'/archive','POST',{});
+      }
+      if (fixtureStudentId) await api(admin,'/admin/students/'+fixtureStudentId,'PATCH',{status:'SUSPENDED'});
+      await api(admin,'/admin/appearance','PUT',originalTheme);
+    } finally {
+      await engine.close();
+    }
   }
 });
