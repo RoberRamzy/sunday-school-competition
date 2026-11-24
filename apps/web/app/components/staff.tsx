@@ -26,17 +26,17 @@ export function Staff({ principal, theme, setTheme, language }: {
       <nav aria-label={t("Staff workspace", "لوحة الخدام")}>
         <button type="button" aria-current={section === "roster" ? "page" : undefined} onClick={() => setSection("roster")}><Icon name="users" size={19}/>{t("Student roster", "قائمة الطلاب")}</button>
         <button type="button" aria-current={section === "competitions" ? "page" : undefined} onClick={() => setSection("competitions")}><Icon name="calendar" size={19}/>{t("Competitions", "المسابقات")}</button>
-        {admin && <button type="button" aria-current={section === "standings" ? "page" : undefined} onClick={() => setSection("standings")}><Icon name="star" size={19}/>{t("Overall leaderboard", "لوحة الترتيب العامة")}</button>}
+        <button type="button" aria-current={section === "standings" ? "page" : undefined} onClick={() => setSection("standings")}><Icon name="star" size={19}/>{t("Overall leaderboard", "لوحة الترتيب العامة")}</button>
         {admin && <button type="button" aria-current={section === "administration" ? "page" : undefined} onClick={() => setSection("administration")}><Icon name="users" size={19}/>{t("Staff and grades", "الخدام والصفوف")}</button>}
         {admin && <button type="button" aria-current={section === "appearance" ? "page" : undefined} onClick={() => setSection("appearance")}><Icon name="palette" size={19}/>{t("Appearance", "المظهر")}</button>}
       </nav>
     </aside>
     <div className="workspace-main">
       {section === "competitions" ? <StaffCompetitions admin={admin} language={language} t={t} />
-        : admin && section === "standings" ? <AdminOverallLeaderboard t={t}/>
+        : section === "standings" ? <AdminOverallLeaderboard t={t}/>
         : admin && section === "appearance" ? <Appearance theme={theme} setTheme={setTheme} t={t} />
         : admin && section === "administration" ? <Administration t={t} currentStaffId={principal.id} />
-        : <Roster admin={admin} t={t} />}
+        : <Roster t={t} />}
     </div>
   </main>;
 }

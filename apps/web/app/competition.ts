@@ -24,6 +24,7 @@ export type CompetitionGrade = { gradeId: string; questionIds: string[]; bluepri
 export type StaffCompetition = {
   id: string; title: string; description?: string; instructions: string; opensAt: string; closesAt: string; durationMinutes: number;
   sharedQuestions: boolean; questions?: CompetitionQuestion[]; legacyDraftSets?: { gradeId: string; questions: CompetitionQuestion[] }[];
+  canManage?: boolean;
   status: string; publishedAt: string | null; grades: CompetitionGrade[]; tiePolicy?: "SCORE_THEN_TIME" | "SCORE_ONLY";
 };
 

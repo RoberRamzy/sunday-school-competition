@@ -99,13 +99,14 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
     archive: t("Archiving takes the competition off the available list. Students who attempted it can still see its published results.", "تزيل الأرشفة المسابقة من قائمة المسابقات المتاحة. يمكن لمن شارك الاطلاع على نتائجه المنشورة."),
   };
   const playable = detail?.status === "ACTIVE" || detail?.status === "SCHEDULED" || detail?.status === "OPEN";
+  const canManage = admin || detail?.canManage;
   return <section>
     <div className="card-heading"><h1>{t("Competitions", "المسابقات")}</h1>
-      {!detail && !editing && admin && <button className="button primary" disabled={busy} type="button" onClick={edit}><Icon name="plus" size={17}/>{t("Create competition", "إنشاء مسابقة")}</button>}
+      {!detail && !editing && grades.length > 0 && <button className="button primary" disabled={busy} type="button" onClick={edit}><Icon name="plus" size={17}/>{t("Create competition", "إنشاء مسابقة")}</button>}
     </div>
-    <p className="subtle section-description">{admin ? t("Set up competitions, monitor attempts, and publish results.", "أعد المسابقات وتابع المحاولات وانشر النتائج.") : t("Monitor participation and see published results for your grades.", "تابع المشاركة والنتائج المنشورة لصفوفك.")}</p>
+    <p className="subtle section-description">{t("Set up competitions, monitor attempts, and publish results.", "أعد المسابقات وتابع المحاولات وانشر النتائج.")}</p>
     {deleted && <p className="notice success" role="status">{t("Competition deleted.", "تم حذف المسابقة.")}</p>}
-    {admin && detail && deleting && <DeleteConfirmation title={t("Delete competition", "حذف المسابقة")} name={detail.title}
+    {canManage && detail && deleting && <DeleteConfirmation title={t("Delete competition", "حذف المسابقة")} name={detail.title}
       consequence={t("This permanently removes the competition, all attempts and scores, and its public leaderboards.", "سيتم حذف المسابقة وجميع المحاولات والنتائج ولوحات الترتيب العامة نهائيًا.")}
       path={`/admin/competitions/${detail.id}`} t={t} onCancel={() => setDeleting(false)} onDeleted={() => {
         setCompetitions(rows => rows?.filter(row => row.id !== detail.id) ?? null);
@@ -126,7 +127,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
           <Link className="link-button" href={`/competitions/${detail.id}`} prefetch={false}>{t("Student competition link", "رابط المسابقة للطلاب")}</Link>
           {shareStatus && <span className="note" role="status">{shareStatus === "copied" ? t("Link copied.", "تم نسخ الرابط.") : t("Copy the address from the student competition link.", "انسخ العنوان من رابط المسابقة للطلاب.")}</span>}
         </div>}
-        {admin && <div className="record-actions">
+        {canManage && <div className="record-actions">
           {detail.status === "DRAFT" && <button className="button" type="button" disabled={busy} onClick={edit}>{t("Edit draft", "تعديل المسودة")}</button>}
           {detail.status === "DRAFT" && <button className="button primary" type="button" disabled={busy} onClick={() => setAction("activate")}>{actionText.activate}</button>}
           {playable && <button className="button" type="button" disabled={busy} onClick={() => setAction("close")}>{actionText.close}</button>}
@@ -135,6 +136,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
           <button className="button danger" type="button" disabled={busy} onClick={() => setDeleting(true)}>{t("Delete competition", "حذف المسابقة")}</button>
           {detail.publishedAt && <span className="status" data-status="ACTIVE">{t("Published", "منشورة")}</span>}
         </div>}
+        {!canManage && <p className="note">{t("Managing this competition requires access to every eligible grade.", "تتطلّب إدارة هذه المسابقة صلاحية الوصول إلى جميع الصفوف المؤهلة.")}</p>}
         {action && <div className="submit-confirm">
           <p>{actionHelp[action]}</p>
           <div className="record-actions">

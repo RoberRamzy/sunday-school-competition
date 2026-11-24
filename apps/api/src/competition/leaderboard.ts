@@ -255,13 +255,13 @@ export class LeaderboardService {
 export class LeaderboardController {
   constructor(private readonly boards: LeaderboardService) {}
 
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SERVANT')
   @Get('admin/leaderboards/all')
   overallPreview(@Actor() actor: StaffPrincipal) {
     return this.boards.overallPreview(actor);
   }
 
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SERVANT')
   @Put('admin/leaderboards/all')
   @bodyDocs(overallVisibility)
   setOverallVisibility(@Actor() actor: StaffPrincipal, @body(overallVisibility) input: z.infer<typeof overallVisibility>) {

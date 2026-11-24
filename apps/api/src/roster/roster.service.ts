@@ -65,6 +65,7 @@ export class RosterService {
     try {
       return await this.db.$transaction(async (tx) => {
         await lockStaff(tx, actor);
+        await requireGrade(tx, actor, data.gradeId);
         const student = await tx.student.create({ data, select: studentFields });
         await audit(tx, actor, 'STUDENT_CREATED', { studentId: student.id, gradeId: student.gradeId });
         return student;
@@ -83,6 +84,8 @@ export class RosterService {
         await this.lockStudents(tx, [id]);
         const original = await tx.student.findUnique({ where: { id } });
         if (!original) throw new NotFoundException('Student was not found');
+        await requireGrade(tx, actor, original.gradeId);
+        if (input.gradeId && input.gradeId !== original.gradeId) await requireGrade(tx, actor, input.gradeId);
         if (input.status === 'ACTIVE' && !original.pinHash) {
           throw new BadRequestException('Activate the student with an activation handout first');
         }
@@ -115,6 +118,7 @@ export class RosterService {
     try {
       return await this.db.$transaction(async (tx) => {
         await lockStaff(tx, actor);
+        await requireGrade(tx, actor, gradeId);
         const grade = await tx.grade.findUnique({ where: { id: gradeId }, select: { id: true } });
         if (!grade) throw new NotFoundException('Grade was not found');
         const labels = students.map((row) => row.displayLabel);

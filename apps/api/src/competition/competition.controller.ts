@@ -30,21 +30,18 @@ export class CompetitionController {
   }
 
   @Post()
-  @Roles('SUPER_ADMIN')
   @bodyDocs(sharedCompetitionInput)
   create(@Actor() actor: StaffPrincipal, @body(sharedCompetitionInput) input: z.infer<typeof sharedCompetitionInput>) {
     return this.competitions.save(actor, input);
   }
 
   @Patch(':id')
-  @Roles('SUPER_ADMIN')
   @bodyDocs(competitionPatch)
   update(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(competitionPatch) input: z.infer<typeof competitionPatch>) {
     return this.competitions.save(actor, input, id);
   }
 
   @Post(':id/activate')
-  @Roles('SUPER_ADMIN')
   @HttpCode(200)
   @bodyDocs(empty)
   activate(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(empty) _: object) {
@@ -52,7 +49,6 @@ export class CompetitionController {
   }
 
   @Post(':id/close')
-  @Roles('SUPER_ADMIN')
   @HttpCode(200)
   @bodyDocs(empty)
   close(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(empty) _: object) {
@@ -60,7 +56,6 @@ export class CompetitionController {
   }
 
   @Post(':id/archive')
-  @Roles('SUPER_ADMIN')
   @HttpCode(200)
   @bodyDocs(empty)
   archive(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(empty) _: object) {
@@ -68,7 +63,6 @@ export class CompetitionController {
   }
 
   @Post(':id/publish')
-  @Roles('SUPER_ADMIN')
   @HttpCode(200)
   @bodyDocs(empty)
   publish(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(empty) _: object) {

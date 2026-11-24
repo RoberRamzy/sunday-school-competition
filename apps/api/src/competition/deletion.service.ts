@@ -1,9 +1,10 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { audit, lockStaff } from '../auth/principal';
+import { audit, lockStaff, requireGrade } from '../auth/principal';
 import type { StaffPrincipal } from '../auth/principal';
 import { Database } from '../database/database.module';
 import { lockCompetition } from './attempt.service';
+import { requireCompetitionManagement } from './competition-data';
 import { LeaderboardService } from './leaderboard';
 
 type Tx = Prisma.TransactionClient;
@@ -36,6 +37,7 @@ export class DeletionService {
     await this.db.$transaction(async tx => {
       await lockStaff(tx, actor);
       await lockCompetition(tx, id, true);
+      await requireCompetitionManagement(tx, actor, id);
       const attempts = await purgeAttempts(tx, { competitionId: id }, [reference('competitionId', id)]);
       await tx.competitionGrade.deleteMany({ where: { competitionId: id } });
       await tx.question.deleteMany({ where: { competitionId: id } });
@@ -47,8 +49,9 @@ export class DeletionService {
   async student(actor: StaffPrincipal, id: string) {
     await this.db.$transaction(async tx => {
       await lockStaff(tx, actor);
-      const rows = await tx.$queryRaw<{ id: string }[]>`SELECT id FROM "Student" WHERE id = ${id}::uuid FOR UPDATE`;
-      if (!rows.length) throw new NotFoundException('Student was not found');
+      const [student] = await tx.$queryRaw<{ gradeId: string }[]>`SELECT "gradeId" FROM "Student" WHERE id = ${id}::uuid FOR UPDATE`;
+      if (!student) throw new NotFoundException('Student was not found');
+      await requireGrade(tx, actor, student.gradeId);
 
       // Attempt creation also takes the student lock first. The competition locks
       // serialize this deletion against finalization and publication.

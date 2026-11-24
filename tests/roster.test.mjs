@@ -1,12 +1,22 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import ExcelJS from 'exceljs';
-import {adminSession, api, browser, success} from './support.mjs';
+import {adminSession, api, browser, context, success} from './support.mjs';
 
-test('staff previews a CSV, imports the roster and downloads an Excel activation handout', async () => {
+test('regular staff import and delete a student and reach competition and overall leaderboard controls', async () => {
   const engine=await browser();
+  let admin;
+  let account;
   try {
-    const staff = await adminSession(engine);
+    admin = await adminSession(engine);
+    const [grade] = await (await success(await api(admin,'/admin/grades'))).json();
+    const username = 'qa-' + crypto.randomUUID();
+    const password = crypto.randomUUID();
+    account = await (await success(await api(admin,'/admin/servants','POST',{
+      fullName:'QA Grade Staff',username,password,gradeIds:[grade.id],
+    }))).json();
+    const staff = await context(engine);
+    await success(await api(staff,'/auth/staff-login','POST',{username,password}));
     const page=await staff.newPage();
     const name='QA roster '+crypto.randomUUID();
     await page.goto('/staff');
@@ -34,8 +44,19 @@ test('staff previews a CSV, imports the roster and downloads an Excel activation
     await confirmation.getByRole('button',{name:'Delete permanently'}).click();
     await page.getByText('Student deleted.',{exact:true}).waitFor();
     await page.getByRole('row').filter({hasText:name}).waitFor({state:'hidden'});
+    await page.getByRole('button',{name:'Competitions',exact:true}).click();
+    await page.getByRole('button',{name:'Create competition',exact:true}).click();
+    await page.getByRole('checkbox',{name:grade.name,exact:true}).waitFor();
+    assert.equal(await page.getByRole('checkbox').count(),1);
+    await page.getByRole('button',{name:'Overall leaderboard',exact:true}).click();
+    await page.getByRole('button',{name:'Publish overall leaderboard',exact:true}).waitFor();
+    assert.equal(await page.getByRole('button',{name:'Staff and grades',exact:true}).count(),0);
   } finally {
-    await engine.close();
+    try {
+      if (account) await api(admin,'/admin/staff/'+account.id,'DELETE',{confirmation:'DELETE'});
+    } finally {
+      await engine.close();
+    }
   }
 });
 

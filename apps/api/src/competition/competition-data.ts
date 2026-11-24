@@ -1,6 +1,7 @@
-import { BadRequestException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException } from '@nestjs/common';
 import { Competition, Prisma, Question } from '@prisma/client';
 import { z } from 'zod';
+import { gradeScope, StaffPrincipal } from '../auth/principal';
 import { competitionInput, ownedQuestionInput, snapshotInput, Snapshot } from './competition.input';
 
 export function validateQuestion(input: Pick<z.infer<typeof ownedQuestionInput>, 'type' | 'items' | 'correctOrder'>) {
@@ -22,6 +23,14 @@ export const gradeSelections = {
   orderBy: { gradeId: 'asc' },
   include: { questions: { orderBy: { position: 'asc' }, select: { questionId: true, snapshot: true } } },
 } satisfies Prisma.Competition$gradesArgs;
+
+// Call with the competition locked so its eligible grades cannot change during authorization.
+export async function requireCompetitionManagement(tx: Prisma.TransactionClient, actor: StaffPrincipal, id: string) {
+  const scope = await gradeScope(tx, actor);
+  if (!scope) return;
+  const grades = await tx.competitionGrade.findMany({ where: { competitionId: id }, select: { gradeId: true } });
+  if (!grades.length || grades.some(({ gradeId }) => !scope.includes(gradeId))) throw new ForbiddenException();
+}
 
 export function competitionInfo(competition: Competition & {
   grades: Prisma.CompetitionGradeGetPayload<{ include: typeof gradeSelections.include }>[];

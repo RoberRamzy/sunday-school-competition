@@ -273,7 +273,13 @@ A student cannot:
 A servant is assigned to one or more grades and can:
 
 -   View students in assigned grades only.
+-   Add, edit, suspend, import, and permanently delete students in assigned grades.
+    A transfer requires access to both grades.
 -   View activation status.
+-   Create and edit competition drafts, publish results, and activate, close,
+    archive, or permanently delete competitions when assigned every eligible grade.
+-   Share direct links to activated competitions they can access.
+-   Preview and control publication of the site-wide across-competition leaderboard.
 -   Monitor participation and completion.
 -   Review results when permitted.
 -   Flag suspicious activity.
@@ -282,9 +288,8 @@ A servant is assigned to one or more grades and can:
 A servant cannot:
 
 -   Access unassigned grades.
--   Change student grades.
--   Manage global settings.
--   Change competition scoring rules.
+-   Manage staff accounts, grade definitions, site appearance, or individual
+    competition leaderboard settings.
 -   Silently delete or reset attempts.
 
 ## 4.3 Super Admin

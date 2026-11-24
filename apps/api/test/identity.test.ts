@@ -128,7 +128,29 @@ test('staff scope, CSRF and input validation protect roster and appearance', { s
   assert.equal((await request(`/admin/students/${other.id}/reset-pin`, { cookie, body: {} })).status, 403);
   assert.equal((await request(`/admin/grades/${grade2}/activation-handout`, { cookie, body: { studentIds: [other.id] } })).status, 403);
   assert.equal((await request('/admin/servants', { cookie })).status, 403);
-  assert.equal((await request('/admin/students', { cookie, body: { fullName: 'x', displayLabel: 'x', gradeId: grade1 } })).status, 403);
+  const scopedStudent = { fullName: 'Scoped Student', displayLabel: 'Scoped Student', gradeId: grade1 };
+  assert.equal((await request('/admin/students', { cookie, body: { ...scopedStudent, gradeId: grade2 } })).status, 403);
+  const added = await request('/admin/students', { cookie, body: scopedStudent });
+  assert.equal(added.status, 201, await added.clone().text());
+  const { id } = await added.json() as { id: string };
+  const studentPath = '/admin/students/' + id;
+  assert.equal((await request(studentPath, { cookie, method: 'PATCH', body: { gradeId: grade2 } })).status, 403);
+  assert.equal((await request('/admin/students/' + other.id, { cookie, method: 'PATCH', body: { gradeId: grade1 } })).status, 403);
+  assert.equal((await request('/admin/students/' + other.id, { cookie, method: 'DELETE', body: { confirmation: 'DELETE' } })).status, 403);
+  const moveGrade = await request('/admin/grades', { cookie: adminCookie, body: { name: 'Servant move grade' } });
+  assert.equal(moveGrade.status, 201);
+  const destination = (await moveGrade.json() as { id: string }).id;
+  const account = await servant.json() as { id: string };
+  assert.equal((await request('/admin/servants/' + account.id, {
+    cookie: adminCookie, method: 'PATCH', body: { gradeIds: [grade1, destination] },
+  })).status, 200);
+  const changed = await request(studentPath, { cookie, method: 'PATCH', body: { gradeId: destination, fullName: 'Updated name', status: 'SUSPENDED' } });
+  assert.equal(changed.status, 200);
+  assert.deepEqual(await changed.json(), { ...scopedStudent, id, gradeId: destination, fullName: 'Updated name', status: 'SUSPENDED' });
+  assert.equal((await request(studentPath, { cookie, method: 'DELETE', body: { confirmation: 'DELETE' } })).status, 204);
+  const payload = { students: [{ fullName: 'Scoped import', displayLabel: 'Scoped import' }], dryRun: false };
+  assert.equal((await request('/admin/students/import', { cookie, body: { ...payload, gradeId: grade2 } })).status, 403);
+  assert.equal((await request('/admin/students/import', { cookie, body: { ...payload, gradeId: grade1 } })).status, 200);
   assert.equal((await request('/admin/appearance', { cookie, method: 'PUT', body: { theme: 'classic' } })).status, 403);
 });
 

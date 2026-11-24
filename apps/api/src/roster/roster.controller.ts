@@ -41,21 +41,18 @@ export class RosterController {
   }
 
   @Post('students')
-  @Roles('SUPER_ADMIN')
   @bodyDocs(studentInput)
   createStudent(@Actor() actor: StaffPrincipal, @body(studentInput) input: z.infer<typeof studentInput>) {
     return this.roster.createStudent(actor, input);
   }
 
   @Patch('students/:id')
-  @Roles('SUPER_ADMIN')
   @bodyDocs(studentPatch)
   updateStudent(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(studentPatch) input: z.infer<typeof studentPatch>) {
     return this.roster.updateStudent(actor, id, input);
   }
 
   @Post('students/import')
-  @Roles('SUPER_ADMIN')
   @HttpCode(200)
   @bodyDocs(studentImport)
   import(@Actor() actor: StaffPrincipal, @body(studentImport) input: z.infer<typeof studentImport>) {

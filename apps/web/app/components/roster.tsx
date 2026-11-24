@@ -18,7 +18,7 @@ function statusLabel(status: Status, t: Translate) {
   }
 }
 
-export function Roster({ admin, t }: { admin: boolean; t: Translate }) {
+export function Roster({ t }: { t: Translate }) {
   const [grades, setGrades] = useState<Grade[]>([]);
   const [gradeId, setGradeId] = useState("");
   const [students, setStudents] = useState<Student[]>([]);
@@ -164,14 +164,14 @@ export function Roster({ admin, t }: { admin: boolean; t: Translate }) {
           {grades.map((grade) => <option key={grade.id} value={grade.id}>{grade.name}</option>)}
         </select><Icon name="down" size={16}/></div>
       </label>
-      {admin && gradeId && <div className="record-actions">
+      {gradeId && <div className="record-actions">
         <button className="button" type="button" disabled={busy} onClick={() => { clearActions(); setImporting(true); }}>{t("Import roster", "استيراد قائمة")}</button>
         <button className="button primary" type="button" disabled={busy} onClick={() => { clearActions(); setEditing("new"); }}><Icon name="plus" size={18}/>{t("Add student", "إضافة طالب")}</button>
       </div>}
     </div>
     {feedback && <p className="notice success" role="status">{feedbackCopy[feedback]}</p>}
     {actionError ? <p className="notice error" role="alert">{errorText(actionError, t)}</p> : null}
-    {admin && editing && <form className="panel" onSubmit={saveStudent} key={editing === "new" ? "new" : editing.id}>
+    {editing && <form className="panel" onSubmit={saveStudent} key={editing === "new" ? "new" : editing.id}>
       <h2>{editing === "new" ? t("Add student", "إضافة طالب") : t("Edit student", "تعديل بيانات الطالب")}</h2>
       <div className="form-grid">
         <label>{t("Full name", "الاسم الكامل")}<input name="fullName" required maxLength={150} defaultValue={editing === "new" ? "" : editing.fullName} disabled={busy}/></label>
@@ -185,7 +185,7 @@ export function Roster({ admin, t }: { admin: boolean; t: Translate }) {
         </div>
       </div>
     </form>}
-    {admin && importing && <ImportRoster gradeId={gradeId} t={t} setParentBusy={setBusy} onCancel={clearActions} onImport={() => {
+    {importing && <ImportRoster gradeId={gradeId} t={t} setParentBusy={setBusy} onCancel={clearActions} onImport={() => {
       setImporting(false);
       setFeedback("imported");
       refresh();
@@ -226,8 +226,8 @@ export function Roster({ admin, t }: { admin: boolean; t: Translate }) {
               <td><strong><bdi>{student.displayLabel}</bdi></strong>{student.fullName !== student.displayLabel && <div className="subtle"><bdi>{student.fullName}</bdi></div>}</td>
               <td><span className="status" data-status={student.status}>{statusLabel(student.status, t)}</span></td>
               <td><div className="record-actions">
-                {admin && <button type="button" className="link-button" disabled={busy} onClick={() => { clearActions(); setEditing(student); }}>{t("Edit", "تعديل")}</button>}
-                {admin && <button type="button" className="link-button danger-text" disabled={busy} onClick={() => { clearActions(); setDeleting(student); }}>{t("Delete student", "حذف الطالب")}</button>}
+                <button type="button" className="link-button" disabled={busy} onClick={() => { clearActions(); setEditing(student); }}>{t("Edit", "تعديل")}</button>
+                <button type="button" className="link-button danger-text" disabled={busy} onClick={() => { clearActions(); setDeleting(student); }}>{t("Delete student", "حذف الطالب")}</button>
                 {student.status === "ACTIVE" && <button type="button" className="link-button" disabled={busy} onClick={() => { clearActions(); setConfirm(student); }}>{t("Reset PIN", "إعادة ضبط الرمز")}</button>}
               </div></td>
             </tr>)}</tbody>

@@ -254,6 +254,7 @@ test('windows, blueprint, concurrent start, reconnect, replay and frozen scores'
   await ok(request(`/admin/competitions/${competitionId}/close`, admin, {}));
   await ok(request(`/admin/competitions/${competitionId}/publish`, admin, {}));
   assert.equal((await ok<{ score: number }>(request(detailPath, servant))).score, 4.5);
+  await ok(request(`/admin/servants/${staff.id}`, admin, { gradeIds: [otherGrade] }, 'PATCH'));
 });
 
 test('monitoring, publication and export each reconcile pending deadlines', { skip: !databaseUrl }, async () => {
@@ -521,20 +522,55 @@ test('overall leaderboard totals published results, shares ranks and removes del
 
   const rows = (board: Leaderboard['publication']) => board.boards[0].rows.filter(row => names.includes(row.name));
   assert.equal((await request(publicPath)).status, 404);
-  assert.equal((await request(staffPath, servant)).status, 403);
-  assert.equal((await request(staffPath, servant, { published: true }, 'PUT')).status, 403);
-  const preview = await ok<Leaderboard['publication'] & { published: boolean }>(request(staffPath, admin));
+  assert.equal((await request(staffPath, students[0].cookie)).status, 403);
+  assert.equal((await request(staffPath, students[0].cookie, { published: true }, 'PUT')).status, 403);
+  const preview = await ok<Leaderboard['publication'] & { published: boolean }>(request(staffPath, servant));
   assert.equal(preview.published, false);
   assert.deepEqual(rows(preview).map(({ name, rank, score }) => [name, rank, score]),
     [['Overall A', 1, 120], ['Overall B', 1, 120], ['Overall C', 2, 90]]);
-  await ok(request(staffPath, admin, { published: true }, 'PUT'));
+  await ok(request(staffPath, servant, { published: true }, 'PUT'));
   assert.deepEqual(rows(await ok<Leaderboard['publication']>(request(publicPath))), rows(preview));
   assert.equal((await request('/admin/competitions/' + second.id, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
   const adjusted = await ok<Leaderboard['publication']>(request(publicPath));
   assert.deepEqual(rows(adjusted).map(({ name, rank, score }) => [name, rank, score]),
     [['Overall B', 1, 120], ['Overall A', 2, 80]]);
-  await ok(request(staffPath, admin, { published: false }, 'PUT'));
+  await ok(request(staffPath, servant, { published: false }, 'PUT'));
   assert.equal((await request(publicPath)).status, 404);
+});
+
+test('servants manage competitions only when assigned every eligible grade', { skip: !databaseUrl }, async () => {
+  const items = ['Blue', 'Red'].map(text => ({ id: randomUUID(), text }));
+  const draft = {
+    title: 'Scoped competition', instructions: '', opensAt: minute(-1), closesAt: minute(10), durationMinutes: 8,
+    gradeIds: [otherGrade],
+    questions: [{ id: randomUUID(), type: 'MCQ', difficulty: 'EASY', text: 'Blue?', points: 2,
+      items, correctOrder: [items[0].id], sortingMode: 'PARTIAL' }],
+  };
+  assert.equal((await request('/admin/competitions', servant, { ...draft, gradeIds: [gradeId] })).status, 403);
+  const { id } = await ok<{ id: string }>(request('/admin/competitions', servant, draft));
+  const path = '/admin/competitions/' + id;
+  const info = await ok<{ canManage: boolean; questions: unknown[] }>(request(path, servant));
+  assert.equal(info.canManage, true);
+  assert.equal(info.questions.length, 1);
+  assert.equal((await request(path, servant, { ...draft, gradeIds: [gradeId] }, 'PATCH')).status, 403);
+  await ok(request(path, servant, { ...draft, title: 'Edited scoped competition' }, 'PATCH'));
+  for (const action of ['activate', 'close', 'publish', 'archive']) await ok(request(path + '/' + action, servant, {}));
+  assert.equal((await request(path + '/leaderboard', servant)).status, 403);
+  assert.equal((await request(path, servant, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
+
+  const shared = await ok<{ id: string }>(request('/admin/competitions', admin, { ...draft, gradeIds: [gradeId, otherGrade] }));
+  const sharedPath = '/admin/competitions/' + shared.id;
+  assert.equal((await request(sharedPath, servant)).status, 403);
+  assert.equal((await request(sharedPath, servant, draft, 'PATCH')).status, 403);
+  assert.equal((await request(sharedPath + '/activate', servant, {})).status, 403);
+  await ok(request(sharedPath + '/activate', admin, {}));
+  assert.equal((await ok<{ canManage: boolean }>(request(sharedPath, servant))).canManage, false);
+  assert.equal((await request(sharedPath + '/close', servant, {})).status, 403);
+  assert.equal((await request(sharedPath, servant, { confirmation: 'DELETE' }, 'DELETE')).status, 403);
+  await ok(request(sharedPath + '/close', admin, {}));
+  assert.equal((await request(sharedPath + '/publish', servant, {})).status, 403);
+  assert.equal((await request(sharedPath + '/archive', servant, {})).status, 403);
+  assert.equal((await request(sharedPath, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
 });
 
 test('permanent deletion removes only the selected competition and student results, including published snapshots', { skip: !databaseUrl }, async () => {

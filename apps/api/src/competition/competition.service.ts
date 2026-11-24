@@ -5,7 +5,7 @@ import { audit, gradeScope, lockStaff, StaffPrincipal } from '../auth/principal'
 import { Database, isDatabaseError } from '../database/database.module';
 import { AttemptService, lockCompetition } from './attempt.service';
 import {
-  category, competitionInfo, CompetitionInput, databaseTime, effectiveStatus, gradeSelections, snapshot, validateQuestion, validateSetup,
+  category, competitionInfo, CompetitionInput, databaseTime, effectiveStatus, gradeSelections, requireCompetitionManagement, snapshot, validateQuestion, validateSetup,
 } from './competition-data';
 import { competitionPatch } from './competition.input';
 
@@ -19,7 +19,10 @@ export class CompetitionService {
       const scope = await gradeScope(tx, actor);
       const gradeFilter = scope ? { gradeId: { in: scope } } : undefined;
       const rows = await tx.competition.findMany({
-        where: gradeFilter ? { grades: { some: gradeFilter }, status: { not: 'DRAFT' } } : undefined,
+        where: gradeFilter ? {
+          grades: { some: gradeFilter },
+          OR: [{ status: { not: 'DRAFT' } }, { grades: { every: gradeFilter } }],
+        } : undefined,
         include: { grades: { ...gradeSelections, where: gradeFilter } },
         orderBy: { opensAt: 'desc' },
       });
@@ -34,12 +37,16 @@ export class CompetitionService {
       const scope = await gradeScope(tx, actor);
       const row = await tx.competition.findUnique({
         where: { id },
-        include: { grades: { ...gradeSelections, where: scope ? { gradeId: { in: scope } } : undefined } },
+        include: {
+          grades: { ...gradeSelections, where: scope ? { gradeId: { in: scope } } : undefined },
+          _count: { select: { grades: true } },
+        },
       });
       if (!row) throw new NotFoundException('Competition was not found');
-      if (scope && (!row.grades.length || row.status === 'DRAFT')) throw new ForbiddenException();
-      const info = competitionInfo(row, await databaseTime(tx));
-      if (actor.role !== 'SUPER_ADMIN' || row.status !== 'DRAFT') return info;
+      const canManage = !scope || (row.grades.length > 0 && row.grades.length === row._count.grades);
+      if (scope && (!row.grades.length || (row.status === 'DRAFT' && !canManage))) throw new ForbiddenException();
+      const info = { ...competitionInfo(row, await databaseTime(tx)), canManage };
+      if (row.status !== 'DRAFT') return info;
       const ids = row.grades.flatMap(({ questions }) => questions.map(({ questionId }) => questionId));
       const questions = new Map((await tx.question.findMany({ where: { id: { in: ids } } }))
         .map(question => [question.id, snapshot(question)]));
@@ -63,12 +70,16 @@ export class CompetitionService {
         let sharedDraft = false;
         if (id) {
           const current = await lockCompetition(tx, id, true);
+          await requireCompetitionManagement(tx, actor, id);
           sharedDraft = current.sharedQuestions;
           if (current.status !== 'DRAFT') throw new ConflictException('Only a draft can be edited');
           const row = await tx.competition.findUniqueOrThrow({ where: { id }, include: { grades: gradeSelections } });
           const prior = competitionInfo(row, await databaseTime(tx));
           data = { ...prior, opensAt: prior.opensAt.toISOString(), closesAt: prior.closesAt.toISOString(), grades: prior.grades as CompetitionInput['grades'], ...input };
         }
+        const scope = await gradeScope(tx, actor);
+        const requestedGrades = data.gradeIds ?? data.grades?.map(({ gradeId }) => gradeId) ?? [];
+        if (scope && requestedGrades.some(gradeId => !scope.includes(gradeId))) throw new ForbiddenException();
         if (data.gradeIds || data.questions) {
           return this.saveShared(tx, actor, data, id);
         }
@@ -150,6 +161,7 @@ export class CompetitionService {
     return this.db.$transaction(async (tx) => {
       await lockStaff(tx, actor);
       const competition = await lockCompetition(tx, id, true);
+      await requireCompetitionManagement(tx, actor, id);
       const now = await databaseTime(tx);
       if (competition.status !== 'DRAFT' || now >= competition.closesAt) {
         throw new ConflictException('Only a draft with a future closing time can be activated');
@@ -204,6 +216,7 @@ export class CompetitionService {
     return this.db.$transaction(async (tx) => {
       await lockStaff(tx, actor);
       const competition = await lockCompetition(tx, id, true);
+      await requireCompetitionManagement(tx, actor, id);
       const now = await databaseTime(tx);
       if (competition.status === 'DRAFT' || competition.status === 'ARCHIVED') {
         throw new ConflictException('Activate the competition before closing it');
@@ -231,6 +244,7 @@ export class CompetitionService {
     return this.db.$transaction(async (tx) => {
       await lockStaff(tx, actor);
       const competition = await lockCompetition(tx, id, true);
+      await requireCompetitionManagement(tx, actor, id);
       const now = await databaseTime(tx);
       if (!['CLOSED', 'ARCHIVED'].includes(effectiveStatus(competition, now))) {
         throw new ConflictException('Close the competition before archiving');
@@ -248,6 +262,7 @@ export class CompetitionService {
     return this.db.$transaction(async (tx) => {
       await lockStaff(tx, actor);
       const competition = await lockCompetition(tx, id, true);
+      await requireCompetitionManagement(tx, actor, id);
       const now = await databaseTime(tx);
       if (!['CLOSED', 'ARCHIVED'].includes(effectiveStatus(competition, now))) throw new ConflictException('Close the competition before publishing');
       await this.attempts.reconcileScope(tx, { competitionId: id }, now);

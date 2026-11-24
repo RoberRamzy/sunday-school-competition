@@ -21,6 +21,7 @@ export class DeletionController {
   }
 
   @Delete('competitions/:id')
+  @Roles('SUPER_ADMIN', 'SERVANT')
   @HttpCode(204)
   @bodyDocs(confirmation)
   removeCompetition(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(confirmation) _: unknown) {
@@ -28,6 +29,7 @@ export class DeletionController {
   }
 
   @Delete('students/:id')
+  @Roles('SUPER_ADMIN', 'SERVANT')
   @HttpCode(204)
   @bodyDocs(confirmation)
   removeStudent(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(confirmation) _: unknown) {
