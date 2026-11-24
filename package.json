@@ -1,0 +1,13 @@
+{
+  "name": "sunday-school-competition",
+  "private": true,
+  "scripts": {
+    "setup": "npm ci --prefix apps/api && npm ci --prefix apps/web",
+    "build": "npm run build --prefix apps/api && npm run build --prefix apps/web",
+    "test:browser": "node --test --test-concurrency=1 tests/*.test.mjs"
+  },
+  "devDependencies": {
+    "exceljs": "4.4.0",
+    "playwright": "1.56.1"
+  }
+}

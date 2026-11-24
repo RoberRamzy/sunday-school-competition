@@ -1,0 +1,284 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum StudentStatus {
+  PENDING_ACTIVATION
+  ACTIVE
+  SUSPENDED
+}
+
+enum StaffStatus {
+  ACTIVE
+  SUSPENDED
+}
+
+enum StaffRole {
+  SUPER_ADMIN
+  SERVANT
+}
+
+enum Theme {
+  classic
+  christmas
+}
+
+model Grade {
+  id           String             @id @default(uuid()) @db.Uuid
+  name         String             @unique
+  students     Student[]
+  servants     ServantGrade[]
+  questions    Question[]
+  competitions CompetitionGrade[]
+  attempts     Attempt[]
+  createdAt    DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime           @updatedAt @db.Timestamptz(3)
+}
+
+model Student {
+  id                   String        @id @default(uuid()) @db.Uuid
+  gradeId              String        @db.Uuid
+  grade                Grade         @relation(fields: [gradeId], references: [id])
+  fullName             String
+  displayLabel         String
+  status               StudentStatus @default(PENDING_ACTIVATION)
+  activationCodeHash   String?
+  activationCodeUsedAt DateTime?     @db.Timestamptz(3)
+  pinHash              String?
+  sessions             Session[]
+  attempts             Attempt[]
+  createdAt            DateTime      @default(now()) @db.Timestamptz(3)
+  updatedAt            DateTime      @updatedAt @db.Timestamptz(3)
+
+  @@unique([gradeId, displayLabel])
+  @@index([gradeId, status])
+}
+
+model AdminUser {
+  id           String         @id @default(uuid()) @db.Uuid
+  fullName     String
+  username     String         @unique
+  passwordHash String
+  role         StaffRole      @default(SERVANT)
+  status       StaffStatus    @default(ACTIVE)
+  grades       ServantGrade[]
+  sessions     Session[]
+  createdAt    DateTime       @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime       @updatedAt @db.Timestamptz(3)
+}
+
+model ServantGrade {
+  servantId String    @db.Uuid
+  gradeId   String    @db.Uuid
+  servant   AdminUser @relation(fields: [servantId], references: [id], onDelete: Cascade)
+  grade     Grade     @relation(fields: [gradeId], references: [id], onDelete: Cascade)
+
+  @@id([servantId, gradeId])
+  @@index([gradeId])
+}
+
+model Session {
+  id        String     @id @default(uuid()) @db.Uuid
+  tokenHash String     @unique
+  studentId String?    @db.Uuid
+  staffId   String?    @db.Uuid
+  student   Student?   @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  staff     AdminUser? @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  expiresAt DateTime   @db.Timestamptz(3)
+  revokedAt DateTime?  @db.Timestamptz(3)
+  createdAt DateTime   @default(now()) @db.Timestamptz(3)
+
+  @@index([studentId, revokedAt])
+  @@index([staffId, revokedAt])
+  @@index([expiresAt])
+}
+
+model AuthLimit {
+  key       String   @id
+  count     Int
+  expiresAt DateTime @db.Timestamptz(3)
+
+  @@index([expiresAt])
+}
+
+model Appearance {
+  id    Int   @id @default(1)
+  theme Theme @default(classic)
+}
+
+model AuditLog {
+  id           String   @id @default(uuid()) @db.Uuid
+  actorType    String
+  actorId      String   @db.Uuid
+  eventType    String
+  metadataJson Json
+  createdAt    DateTime @default(now()) @db.Timestamptz(3)
+
+  @@index([eventType, createdAt])
+  @@index([actorId, createdAt])
+}
+
+enum QuestionType {
+  MCQ
+  SORTING
+}
+
+enum Difficulty {
+  EASY
+  MEDIUM
+  HARD
+}
+
+enum SortingMode {
+  PARTIAL
+  EXACT
+}
+
+enum CompetitionStatus {
+  DRAFT
+  SCHEDULED
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+enum TiePolicy {
+  SCORE_THEN_TIME
+  SCORE_ONLY
+}
+
+enum AttemptStatus {
+  AWAITING_START
+  IN_PROGRESS
+  SUBMITTED
+  TIMED_OUT
+  INVALIDATED
+}
+
+model Question {
+  id           String                @id @default(uuid()) @db.Uuid
+  gradeId      String                @db.Uuid
+  grade        Grade                 @relation(fields: [gradeId], references: [id])
+  type         QuestionType
+  difficulty   Difficulty
+  explanation  String                @default("")
+  imageUrl     String?
+  tags         String[]
+  text         String
+  points       Int
+  items        Json
+  correctOrder String[]              @db.Uuid
+  sortingMode  SortingMode
+  archived     Boolean               @default(false)
+  createdAt    DateTime              @default(now()) @db.Timestamptz(3)
+  updatedAt    DateTime              @updatedAt @db.Timestamptz(3)
+  selections   CompetitionQuestion[]
+  attempts     AttemptQuestion[]
+
+  @@index([gradeId, archived, type, difficulty])
+}
+
+model Competition {
+  id              String             @id @default(uuid()) @db.Uuid
+  title           String
+  description     String             @default("")
+  tiePolicy       TiePolicy          @default(SCORE_THEN_TIME)
+  instructions    String
+  opensAt         DateTime           @db.Timestamptz(3)
+  closesAt        DateTime           @db.Timestamptz(3)
+  durationMinutes Int
+  status          CompetitionStatus  @default(DRAFT)
+  publishedAt     DateTime?          @db.Timestamptz(3)
+  createdAt       DateTime           @default(now()) @db.Timestamptz(3)
+  updatedAt       DateTime           @updatedAt @db.Timestamptz(3)
+  grades          CompetitionGrade[]
+  attempts        Attempt[]
+
+  @@index([status, closesAt])
+}
+
+model CompetitionGrade {
+  id            String                @id @default(uuid()) @db.Uuid
+  competitionId String                @db.Uuid
+  gradeId       String                @db.Uuid
+  competition   Competition           @relation(fields: [competitionId], references: [id])
+  grade         Grade                 @relation(fields: [gradeId], references: [id])
+  blueprint     Json
+  questions     CompetitionQuestion[]
+
+  @@unique([competitionId, gradeId])
+  @@index([gradeId])
+}
+
+model CompetitionQuestion {
+  competitionGradeId String           @db.Uuid
+  questionId         String           @db.Uuid
+  competitionGrade   CompetitionGrade @relation(fields: [competitionGradeId], references: [id], onDelete: Cascade)
+  question           Question         @relation(fields: [questionId], references: [id])
+  position           Int
+  snapshot           Json?
+
+  @@id([competitionGradeId, questionId])
+  @@unique([competitionGradeId, position])
+}
+
+model Attempt {
+  id                String            @id @default(uuid()) @db.Uuid
+  competitionId     String            @db.Uuid
+  studentId         String            @db.Uuid
+  gradeId           String            @db.Uuid
+  competition       Competition       @relation(fields: [competitionId], references: [id])
+  student           Student           @relation(fields: [studentId], references: [id])
+  grade             Grade             @relation(fields: [gradeId], references: [id])
+  replacesAttemptId String?           @unique @db.Uuid
+  replacesAttempt   Attempt?          @relation("Replacement", fields: [replacesAttemptId], references: [id])
+  replacement       Attempt?          @relation("Replacement")
+  status            AttemptStatus
+  startedAt         DateTime?         @db.Timestamptz(3)
+  expiresAt         DateTime?         @db.Timestamptz(3)
+  finishedAt        DateTime?         @db.Timestamptz(3)
+  submittedAt       DateTime?         @db.Timestamptz(3)
+  position          Int               @default(0)
+  percentage        Decimal           @default(0) @db.Decimal(5, 2)
+  score             Decimal           @default(0) @db.Decimal(12, 2)
+  maxScore          Int               @default(0)
+  correctCount      Int               @default(0)
+  incorrectCount    Int               @default(0)
+  unansweredCount   Int               @default(0)
+  questions         AttemptQuestion[]
+  createdAt         DateTime          @default(now()) @db.Timestamptz(3)
+  updatedAt         DateTime          @updatedAt @db.Timestamptz(3)
+
+  @@index([competitionId, gradeId, status, expiresAt])
+  @@index([studentId, status, expiresAt])
+}
+
+model AttemptQuestion {
+  id         String         @id @default(uuid()) @db.Uuid
+  attemptId  String         @db.Uuid
+  questionId String         @db.Uuid
+  position   Int
+  snapshot   Json
+  itemOrder  String[]       @db.Uuid
+  attempt    Attempt        @relation(fields: [attemptId], references: [id])
+  question   Question       @relation(fields: [questionId], references: [id])
+  answer     AttemptAnswer?
+
+  @@unique([attemptId, position])
+  @@unique([attemptId, questionId])
+}
+
+model AttemptAnswer {
+  attemptQuestionId String          @id @db.Uuid
+  attemptQuestion   AttemptQuestion @relation(fields: [attemptQuestionId], references: [id])
+  itemIds           String[]        @db.Uuid
+  revision          Int
+  savedAt           DateTime        @db.Timestamptz(3)
+  lockedAt          DateTime?       @db.Timestamptz(3)
+  earnedPoints      Decimal?        @db.Decimal(12, 2)
+}

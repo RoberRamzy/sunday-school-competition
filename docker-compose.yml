@@ -1,0 +1,19 @@
+name: sunday_school_competition
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: sunday
+      POSTGRES_DB: sunday
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a local database password}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-55438}:5432"
+    volumes:
+      - sunday_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sunday"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+volumes:
+  sunday_data:

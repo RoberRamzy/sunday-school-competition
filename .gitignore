@@ -1,0 +1,15 @@
+node_modules/
+.next/
+dist/
+coverage/
+.env
+.env.local
+*.tsbuildinfo
+test-results/
+playwright-report/
+.env.*
+!.env.example
+.vercel/
+.aws/
+.codex/
+/docs/checkpoint-milestone-*.tar.gz

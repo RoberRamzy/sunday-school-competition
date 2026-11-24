@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: sunday-school-competition-api
+    runtime: node
+    plan: free
+    rootDir: apps/api
+    autoDeployTrigger: "off"
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /ready
+    envVars:
+      - key: NODE_VERSION
+        value: 24.12.0
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: PUBLIC_ORIGIN
+        sync: false

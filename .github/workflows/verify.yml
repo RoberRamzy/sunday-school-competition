@@ -1,0 +1,41 @@
+name: Verify application
+on: [push, pull_request]
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    services:
+      db:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: sunday
+          POSTGRES_PASSWORD: ci-local-only
+          POSTGRES_DB: sunday
+        ports: ['5432:5432']
+        options: --health-cmd pg_isready --health-interval 3s --health-timeout 3s --health-retries 20
+    env:
+      DATABASE_URL: postgresql://sunday:ci-local-only@127.0.0.1:5432/sunday
+      PUBLIC_ORIGIN: http://localhost:3000
+      ADMIN_USERNAME: admin
+      ADMIN_PASSWORD: ci-integration-only
+      TEST_ADMIN_PASSWORD: ci-integration-only
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm ci && npm run setup
+      - run: npm run db:migrate --prefix apps/api
+      - run: npm run build
+      - run: npm run db:seed --prefix apps/api
+      - run: npm test --prefix apps/api
+      - run: npx playwright install --with-deps chromium
+      - name: Exercise deployed builds
+        run: |
+          npm start --prefix apps/api > /tmp/sunday-api.log 2>&1 &
+          npm start --prefix apps/web > /tmp/sunday-web.log 2>&1 &
+          for i in {1..60}; do
+            if curl -fsS http://localhost:3000/api/appearance > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:browser
