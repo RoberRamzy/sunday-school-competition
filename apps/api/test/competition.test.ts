@@ -480,3 +480,81 @@ test('legacy grades require matching frozen questions for Overall and drafts can
   assert.equal(converted.overallAvailable, true);
   assert.ok(await db.question.findUnique({ where: { id: mcq.id } }));
 });
+
+test('permanent deletion removes only the selected competition and student results, including published snapshots', { skip: !databaseUrl }, async () => {
+  const fixture = async (index: number) => {
+    const displayLabel = `Delete fixture ${index}`;
+    const student = await db.student.create({
+      data: { gradeId, fullName: displayLabel, displayLabel, status: 'ACTIVE',
+        pinHash: await hashPassword(pin), activationCodeUsedAt: new Date() },
+    });
+    const cookie = authCookie(await request('/auth/login', undefined, { gradeId, studentId: student.id, pin }));
+    return { student, cookie };
+  };
+  const [first, second] = await Promise.all([fixture(1), fixture(2)]);
+  const items = ['Blue', 'Red'].map(text => ({ id: randomUUID(), text }));
+  const { id } = await ok<{ id: string }>(request('/admin/competitions', admin, {
+    title: 'Deletion fixture', instructions: '', opensAt: minute(-1), closesAt: minute(10), durationMinutes: 8,
+    gradeIds: [gradeId], questions: [{ id: randomUUID(), type: 'MCQ', difficulty: 'EASY', text: 'Blue',
+      points: 2, items, correctOrder: [items[0].id], sortingMode: 'PARTIAL' }],
+  }));
+  const path = `/admin/competitions/${id}`;
+  await ok(request(path + '/activate', admin, {}));
+  const start = (cookie: string) => ok<ResponseState>(request(`/competitions/${id}/start`, cookie, {}));
+  const original = await start(second.cookie);
+  await ok(request(`/admin/attempts/${original.id}/authorize-replacement`, admin, { reason: 'Synthetic recovery' }));
+  const attempts = [await start(first.cookie), await start(second.cookie)];
+  const cookies = [first.cookie, second.cookie];
+  for (const [index, attempt] of attempts.entries()) {
+    await ok(advance(attempt.id, attempt.question!.id, cookies[index], [items[index].id]));
+    await ok(request(`/attempts/${attempt.id}/submit`, cookies[index], {}));
+  }
+  await ok(request(path + '/close', admin, {}));
+  await ok(request(path + '/publish', admin, {}));
+  const boards = path + '/leaderboard';
+  const view = await ok<Leaderboard>(request(boards, admin, { scopes: ['overall', gradeId], tiePolicy: 'SCORE_ONLY' }, 'PUT'));
+  await ok(request(boards + '/publish', admin, { revision: view.revision }));
+  const publicPath = `/leaderboards/${id}`;
+
+  const deleteStudent = `/admin/students/${first.student.id}`;
+  assert.equal((await request(deleteStudent, servant, { confirmation: 'DELETE' }, 'DELETE')).status, 403);
+  assert.equal((await request(deleteStudent, admin, {}, 'DELETE')).status, 400);
+  assert.equal((await request(deleteStudent, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
+  assert.equal(await db.student.count({ where: { id: first.student.id } }), 0);
+  assert.equal(await db.session.count({ where: { studentId: first.student.id } }), 0);
+  assert.equal(await db.attempt.count({ where: { studentId: first.student.id } }), 0);
+  assert.equal((await request('/auth/me', first.cookie)).status, 401);
+  const after = await ok<Leaderboard['publication']>(request(publicPath));
+  assert.ok(after.boards.every(board => board.rows.length === 1 &&
+    board.rows[0].rank === 1 && board.rows[0].alias === view.boards[0].rows[1].alias));
+
+  assert.equal((await request(path, servant, { confirmation: 'DELETE' }, 'DELETE')).status, 403);
+  assert.equal((await request(path, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
+  assert.equal(await db.competition.count({ where: { id } }), 0);
+  assert.equal(await db.attempt.count({ where: { competitionId: id } }), 0);
+  assert.equal(await db.question.count({ where: { competitionId: id } }), 0);
+  assert.equal(await db.auditLog.count({ where: { metadataJson: { path: ['competitionId'], equals: id } } }), 0);
+  assert.equal(await db.student.count({ where: { id: second.student.id } }), 1);
+  assert.equal((await request(publicPath)).status, 404);
+  assert.equal((await request(`/student/competitions/${id}`, second.cookie)).status, 404);
+  assert.equal((await request(`/attempts/${attempts[1].id}/status`, second.cookie)).status, 404);
+});
+
+test('only a super admin can delete another staff account and its sessions', { skip: !databaseUrl }, async () => {
+  const me = await ok<{ id: string }>(request('/auth/me', admin));
+  const credentials = { username: 'delete-admin-fixture', password };
+  const other = await db.adminUser.create({
+    data: { username: credentials.username, passwordHash: await hashPassword(password), fullName: 'Delete admin', role: 'SUPER_ADMIN' },
+  });
+  const cookie = authCookie(await request('/auth/staff-login', undefined, credentials));
+  const path = `/admin/staff/${other.id}`;
+  assert.equal((await request('/admin/staff', servant)).status, 403);
+  assert.equal((await request(path, servant, { confirmation: 'DELETE' }, 'DELETE')).status, 403);
+  assert.equal((await request(`/admin/staff/${me.id}`, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 403);
+  const list = await ok<Array<{ id: string; role: string }>>(request('/admin/staff', admin));
+  assert.ok(list.some(row => row.id === other.id && row.role === 'SUPER_ADMIN' && !('passwordHash' in row)));
+  assert.equal((await request(path, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
+  assert.equal((await request('/auth/me', cookie)).status, 401);
+  assert.equal(await db.session.count({ where: { staffId: other.id } }), 0);
+  assert.equal((await request('/auth/me', admin)).status, 200);
+});

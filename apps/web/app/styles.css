@@ -352,3 +352,15 @@ form .notice { margin-block: .35rem; }
   background: var(--tint);
   color: var(--accent);
 }
+
+.delete-dialog {
+  width: min(30rem, calc(100% - 2rem));
+  margin: auto;
+  padding: clamp(1.2rem, 4vw, 2rem);
+  color: var(--ink);
+  background: var(--surface);
+}
+.delete-dialog::backdrop { background: #14231f99; }
+.button.danger { color: #fff; background: #8c2335; border-color: #8c2335; }
+.button.danger:not(:disabled):hover { background: #70192c; }
+.link-button.danger-text { color: #8c2335; }

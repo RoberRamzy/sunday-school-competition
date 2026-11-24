@@ -4,9 +4,11 @@ import { CompetitionController, StaffAttemptController, StudentCompetitionContro
 import { CompetitionService } from './competition.service';
 import { LeaderboardController, LeaderboardService } from './leaderboard';
 import { ResultsService } from './results.service';
+import { DeletionController } from './deletion.controller';
+import { DeletionService } from './deletion.service';
 
 @Module({
-  controllers: [CompetitionController, StaffAttemptController, StudentCompetitionController, LeaderboardController],
-  providers: [CompetitionService, AttemptService, ResultsService, LeaderboardService],
+  controllers: [CompetitionController, StaffAttemptController, StudentCompetitionController, LeaderboardController, DeletionController],
+  providers: [CompetitionService, AttemptService, ResultsService, LeaderboardService, DeletionService],
 })
 export class CompetitionModule {}

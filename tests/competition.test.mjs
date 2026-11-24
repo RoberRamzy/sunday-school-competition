@@ -108,6 +108,16 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     await publicLink.waitFor({state:'hidden'});
     await publicPage.reload();
     await publicPage.getByText('This leaderboard is unavailable.').waitFor();
+    await staffPage.getByRole('button',{name:'Delete competition',exact:true}).click();
+    const prompt = staffPage.getByRole('dialog',{name:'Delete competition'});
+    assert.equal(await prompt.getByRole('button',{name:'Delete permanently'}).isEnabled(),false);
+    await prompt.getByRole('button',{name:'Cancel'}).click();
+    await staffPage.getByRole('button',{name:'Delete competition',exact:true}).click();
+    await prompt.getByLabel('Type DELETE to confirm').fill('DELETE');
+    await prompt.getByRole('button',{name:'Delete permanently'}).click();
+    await staffPage.getByText('Competition deleted.',{exact:true}).waitFor();
+    assert.equal((await api(alice,'/student/competitions/'+draft.id)).status(),404);
+    fixtureCompetition = undefined;
 
   } finally {
     try {

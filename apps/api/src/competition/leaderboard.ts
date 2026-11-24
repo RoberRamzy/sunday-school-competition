@@ -135,6 +135,13 @@ export class LeaderboardService {
     });
   }
 
+  async refreshPublished(tx: Prisma.TransactionClient, id: string) {
+    const competition = await tx.competition.findUniqueOrThrow({ where: { id } });
+    if (!competition.publicLeaderboard) return;
+    const { publication } = await this.view(tx, competition, await databaseTime(tx));
+    await tx.competition.update({ where: { id }, data: { publicLeaderboard: publication } });
+  }
+
   async publicBoard(id: string) {
     const competition = await this.db.competition.findUnique({
       where: { id }, select: { publicLeaderboard: true },

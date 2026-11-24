@@ -32,7 +32,7 @@ export function Staff({ principal, theme, setTheme, language }: {
     <div className="workspace-main">
       {section === "competitions" ? <StaffCompetitions admin={admin} language={language} t={t} />
         : admin && section === "appearance" ? <Appearance theme={theme} setTheme={setTheme} t={t} />
-        : admin && section === "administration" ? <Administration t={t} />
+        : admin && section === "administration" ? <Administration t={t} currentStaffId={principal.id} />
         : <Roster admin={admin} t={t} />}
     </div>
   </main>;

@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api, errorText, json, type Grade, type Language, type Translate } from "../api";
 import { displayDate, statusText, type StaffCompetition } from "../competition";
 import { CompetitionEditor } from "./competition-editor";
+import { DeleteConfirmation } from "./delete-confirmation";
 import { AdminLeaderboard } from "./leaderboard";
 import { CompetitionMonitor } from "./competition-monitor";
 import { Icon } from "./ui-icon";
@@ -15,6 +16,8 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
   const [grades, setGrades] = useState<Grade[]>([]);
   const [detail, setDetail] = useState<StaffCompetition | null>(null);
   const [showLeaderboard, setShowLeaderboard] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleted, setDeleted] = useState(false);
   const [editing, setEditing] = useState(false);
   const [action, setAction] = useState<Action | null>(null);
   const [error, setError] = useState<unknown>(null);
@@ -42,6 +45,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
     try {
       setDetail(await api<StaffCompetition>(`/admin/competitions/${id}`));
       setShowLeaderboard(false);
+      setDeleted(false);
     } catch (error) {
       setError(error);
     } finally {
@@ -88,6 +92,13 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
       {!detail && !editing && admin && <button className="button primary" disabled={busy} type="button" onClick={edit}><Icon name="plus" size={17}/>{t("Create competition", "إنشاء مسابقة")}</button>}
     </div>
     <p className="subtle section-description">{admin ? t("Set up competitions, monitor attempts, and publish results.", "أعد المسابقات وتابع المحاولات وانشر النتائج.") : t("Monitor participation and see published results for your grades.", "تابع المشاركة والنتائج المنشورة لصفوفك.")}</p>
+    {deleted && <p className="notice success" role="status">{t("Competition deleted.", "تم حذف المسابقة.")}</p>}
+    {admin && detail && deleting && <DeleteConfirmation title={t("Delete competition", "حذف المسابقة")} name={detail.title}
+      consequence={t("This permanently removes the competition, all attempts and scores, and its public leaderboards.", "سيتم حذف المسابقة وجميع المحاولات والنتائج ولوحات الترتيب العامة نهائيًا.")}
+      path={`/admin/competitions/${detail.id}`} t={t} onCancel={() => setDeleting(false)} onDeleted={() => {
+        setCompetitions(rows => rows?.filter(row => row.id !== detail.id) ?? null);
+        setDeleting(false); setDetail(null); setAction(null); setShowLeaderboard(false); setDeleted(true);
+      }}/>}
     {error ? <p role="alert" className="notice error">{errorText(error, t)}{" "}{!competitions && <button className="link-button" type="button" onClick={load}>{t("Try again", "حاول مجددًا")}</button>}</p> : null}
     {editing ? <CompetitionEditor competition={detail} grades={grades} t={t} onCancel={() => setEditing(false)} onSave={(saved) => {
       setEditing(false); void open(saved.id); void load();
@@ -104,6 +115,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
           {playable && <button className="button" type="button" disabled={busy} onClick={() => setAction("close")}>{actionText.close}</button>}
           {(detail.status === "CLOSED" || detail.status === "ARCHIVED") && !detail.publishedAt && <button className="button primary" type="button" disabled={busy} onClick={() => setAction("publish")}>{actionText.publish}</button>}
           {detail.status === "CLOSED" && <button className="button" type="button" disabled={busy} onClick={() => setAction("archive")}>{actionText.archive}</button>}
+          <button className="button danger" type="button" disabled={busy} onClick={() => setDeleting(true)}>{t("Delete competition", "حذف المسابقة")}</button>
           {detail.publishedAt && <span className="status" data-status="ACTIVE">{t("Published", "منشورة")}</span>}
         </div>}
         {action && <div className="submit-confirm">

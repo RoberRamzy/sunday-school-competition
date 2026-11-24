@@ -2,6 +2,7 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { api, apiResponse, errorText, json, type Grade, type Translate } from "../api";
+import { DeleteConfirmation } from "./delete-confirmation";
 import { Icon } from "./ui-icon";
 
 type Status = "PENDING_ACTIVATION" | "ACTIVE" | "SUSPENDED";
@@ -22,10 +23,11 @@ export function Roster({ admin, t }: { admin: boolean; t: Translate }) {
   const [gradeId, setGradeId] = useState("");
   const [students, setStudents] = useState<Student[]>([]);
   const [selection, setSelection] = useState<string[]>([]);
+  const [deleting, setDeleting] = useState<Student | null>(null);
   const [editing, setEditing] = useState<Student | "new" | null>(null);
   const [importing, setImporting] = useState(false);
   const [confirm, setConfirm] = useState<Student | "handout" | null>(null);
-  const [feedback, setFeedback] = useState<"saved" | "downloaded" | "reset" | "imported" | null>(null);
+  const [feedback, setFeedback] = useState<"saved" | "downloaded" | "reset" | "imported" | "deleted" | null>(null);
   const [loadError, setLoadError] = useState<unknown>(null);
   const [actionError, setActionError] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -138,10 +140,15 @@ export function Roster({ admin, t }: { admin: boolean; t: Translate }) {
     downloaded: t("Handout downloaded. Give each student only their own password.", "تم تنزيل الكشف. أعطِ كل طالب كلمة مروره فقط."),
     reset: t("PIN reset. Select this student to issue a fresh activation handout.", "تمت إعادة ضبط الرمز. حدد الطالب لإصدار كشف تفعيل جديد."),
     imported: t("Roster imported.", "تم استيراد القائمة."),
+    deleted: t("Student deleted.", "تم حذف الطالب."),
   };
 
   return <section aria-labelledby="roster-title">
     <h1 id="roster-title">{t("Student roster", "قائمة الطلاب")}</h1>
+    {deleting && <DeleteConfirmation title={t("Delete student", "حذف الطالب")} name={deleting.displayLabel}
+      consequence={t("This permanently removes the account, PIN, attempts, and scores, including any published leaderboard entries.", "سيُحذف الحساب والرمز والمحاولات والنتائج نهائيًا، بما فيها النتائج المنشورة في لوحات الترتيب.")}
+      path={`/admin/students/${deleting.id}`} t={t} onCancel={() => setDeleting(null)}
+      onDeleted={() => { setDeleting(null); setFeedback("deleted"); refresh(); }}/>}
     <p className="subtle">{t("Manage accounts and issue one-time passwords by grade.", "أدر الحسابات وأصدر كلمات مرور لمرة واحدة حسب الصف.")}</p>
     <div className="roster-controls">
       <label>{t("Grade", "الصف الدراسي")}<div className="select-wrap">
@@ -220,6 +227,7 @@ export function Roster({ admin, t }: { admin: boolean; t: Translate }) {
               <td><span className="status" data-status={student.status}>{statusLabel(student.status, t)}</span></td>
               <td><div className="record-actions">
                 {admin && <button type="button" className="link-button" disabled={busy} onClick={() => { clearActions(); setEditing(student); }}>{t("Edit", "تعديل")}</button>}
+                {admin && <button type="button" className="link-button danger-text" disabled={busy} onClick={() => { clearActions(); setDeleting(student); }}>{t("Delete student", "حذف الطالب")}</button>}
                 {student.status === "ACTIVE" && <button type="button" className="link-button" disabled={busy} onClick={() => { clearActions(); setConfirm(student); }}>{t("Reset PIN", "إعادة ضبط الرمز")}</button>}
               </div></td>
             </tr>)}</tbody>

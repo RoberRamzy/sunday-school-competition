@@ -2,10 +2,16 @@
 
 import { useEffect, useState, type FormEvent } from "react";
 import { api, json, errorText, type Grade, type Translate } from "../api";
+import { DeleteConfirmation } from "./delete-confirmation";
 
 type Servant = {id: string; fullName: string; username: string; status: "ACTIVE" | "SUSPENDED"; gradeIds: string[]};
 
-export function Administration({ t }: { t: Translate }) {
+type Staff = Omit<Servant, "gradeIds"> & {role: "SUPER_ADMIN" | "SERVANT"};
+
+export function Administration({ t, currentStaffId }: { t: Translate; currentStaffId: string }) {
+  const [accounts, setAccounts] = useState<Staff[]>([]);
+  const [deleting, setDeleting] = useState<Staff | null>(null);
+  const [deleted, setDeleted] = useState(false);
   const [grades, setGrades] = useState<Grade[]>([]);
   const [staff, setStaff] = useState<Servant[]>([]);
   const [gradeId, setGradeId] = useState("");
@@ -14,9 +20,10 @@ export function Administration({ t }: { t: Translate }) {
   const [notice, setNotice] = useState(false);
   const [busy, setBusy] = useState(false);
   async function refresh() {
-    const [gradeRows, staffRows] = await Promise.all([api<Grade[]>("/admin/grades"), api<Servant[]>("/admin/servants")]);
+    const [gradeRows, staffRows, allStaff] = await Promise.all([api<Grade[]>("/admin/grades"), api<Servant[]>("/admin/servants"), api<Staff[]>("/admin/staff")]);
     setGrades(gradeRows);
     setStaff(staffRows);
+    setAccounts(allStaff);
   }
   useEffect(() => {refresh().catch(setError);}, []);
   const grade = grades.find(row => row.id === gradeId);
@@ -63,5 +70,29 @@ export function Administration({ t }: { t: Translate }) {
       {servant && <label>{t("Account status","حالة الحساب")}<select name="status" defaultValue={servant.status}><option value="ACTIVE">{t("Active","نشط")}</option><option value="SUSPENDED">{t("Suspended","موقوف")}</option></select></label>}
       <button disabled={busy} className="button primary">{t("Save servant","حفظ الخادم")}</button>
     </form>
+    <section className="panel form-stack" aria-labelledby="staff-accounts">
+      <h2 id="staff-accounts">{t("Staff accounts", "حسابات الخدام والمديرين")}</h2>
+      {deleted && <p className="notice success" role="status">{t("Staff account deleted.", "تم حذف الحساب.")}</p>}
+      <div className="table-wrap" tabIndex={0} role="region" aria-label={t("Staff accounts", "حسابات الخدام والمديرين")}>
+        <table className="roster-table data-table"><thead><tr>
+          <th scope="col">{t("Name", "الاسم")}</th><th scope="col">{t("Role", "الدور")}</th><th scope="col">{t("Actions", "الإجراءات")}</th>
+        </tr></thead><tbody>{accounts.map(account => <tr key={account.id}>
+          <td><bdi>{account.fullName} ({account.username})</bdi></td>
+          <td>{account.role === "SUPER_ADMIN" ? t("Super admin", "مدير النظام") : t("Servant", "خادم")}</td>
+          <td>{account.id === currentStaffId ? t("Current account", "الحساب الحالي") :
+            <button type="button" className="link-button danger-text" disabled={busy} onClick={() => { setDeleted(false); setDeleting(account); }}>{t("Delete staff account", "حذف الحساب")}</button>}</td>
+        </tr>)}</tbody></table>
+      </div>
+    </section>
+    {deleting && <DeleteConfirmation title={t("Delete staff account", "حذف الحساب")} name={deleting.username}
+      consequence={t("This permanently removes the staff account, revokes its sessions, and removes its grade assignments.", "سيُحذف الحساب نهائيًا، وتُلغى جلساته والصفوف المسندة إليه.")}
+      path={`/admin/staff/${deleting.id}`} t={t} onCancel={() => setDeleting(null)} onDeleted={() => {
+        setDeleting(null);
+        setAccounts(rows => rows.filter(row => row.id !== deleting.id));
+        setStaff(rows => rows.filter(row => row.id !== deleting.id));
+        if (staffId === deleting.id) setStaffId("");
+        setDeleted(true);
+
+      }}/>}
   </section>;
 }
