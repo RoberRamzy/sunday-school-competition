@@ -19,13 +19,22 @@ function boardName(board: Board, t: Translate) {
   return board.name ?? t("Overall", "جميع الصفوف");
 }
 
+const gradeOrder = new Intl.Collator("en", { numeric: true });
+
+function sortBoards(boards: Board[]) {
+  return [...boards].sort((a, b) =>
+    Number(b.scope === "overall") - Number(a.scope === "overall") ||
+    gradeOrder.compare(a.name ?? "", b.name ?? ""));
+}
+
 function BoardView({ boards, t, cumulative = false }: { boards: Board[]; t: Translate; cumulative?: boolean }) {
   const [scope, setScope] = useState("");
-  const selected = boards.find(board => board.scope === scope) ?? boards[0];
+  const orderedBoards = sortBoards(boards);
+  const selected = orderedBoards.find(board => board.scope === scope) ?? orderedBoards[0];
   if (!selected) return <p className="note">{t("No boards selected.", "لم تُحدَّد أي لوحة.")}</p>;
   return <div className="form-stack">
     {boards.length > 1 && <nav className="record-actions" aria-label={t("Leaderboard scope", "نطاق لوحة الترتيب")}>
-      {boards.map(board => <button key={board.scope} className="button" type="button" aria-pressed={board.scope === selected.scope} onClick={() => setScope(board.scope)}>{boardName(board, t)}</button>)}
+      {orderedBoards.map(board => <button key={board.scope} className="button" type="button" aria-pressed={board.scope === selected.scope} onClick={() => setScope(board.scope)}>{boardName(board, t)}</button>)}
     </nav>}
     {!cumulative && <h3>{boardName(selected, t)}</h3>}
     {selected.rows.length === 0 ? <p className="note">{t("No completed attempts yet.", "لا توجد محاولات مكتملة بعد.")}</p>
@@ -168,7 +177,7 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
             <option value="SCORE_ONLY">{t("Equal scores share rank", "النتائج المتساوية تشترك في الترتيب")}</option>
             <option value="SCORE_THEN_TIME">{t("Shortest elapsed time", "أقصر مدة")}</option>
           </select></label>
-          <div className="grade-choices">{view.boards.map(board => <label key={board.scope} className="field-check">
+          <div className="grade-choices">{sortBoards(view.boards).map(board => <label key={board.scope} className="field-check">
             <input type="checkbox" checked={scopes.includes(board.scope)} onChange={e => setScopes(list =>
               e.target.checked ? [...list, board.scope] : list.filter(scope => scope !== board.scope))}/>
             {t("Publish", "نشر")} {boardName(board, t)}
