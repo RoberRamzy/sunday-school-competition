@@ -111,6 +111,11 @@ model Appearance {
   theme Theme @default(classic)
 }
 
+model OverallLeaderboard {
+  id        Int     @id @default(1)
+  published Boolean @default(false)
+}
+
 model AuditLog {
   id           String   @id @default(uuid()) @db.Uuid
   actorType    String

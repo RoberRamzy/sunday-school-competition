@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { api, errorText, json, type Grade, type Language, type Translate } from "../api";
 import { displayDate, statusText, type StaffCompetition } from "../competition";
@@ -22,6 +23,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
   const [action, setAction] = useState<Action | null>(null);
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [shareStatus, setShareStatus] = useState<"copied" | "failed" | null>(null);
 
   const load = useCallback(async () => {
     setError(null);
@@ -46,6 +48,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
       setDetail(await api<StaffCompetition>(`/admin/competitions/${id}`));
       setShowLeaderboard(false);
       setDeleted(false);
+      setShareStatus(null);
     } catch (error) {
       setError(error);
     } finally {
@@ -56,6 +59,15 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
   function edit() {
     setError(null);
     setEditing(true);
+  }
+
+  async function copyCompetitionLink(id: string) {
+    try {
+      await navigator.clipboard.writeText(new URL(`/competitions/${id}`, window.location.origin).href);
+      setShareStatus("copied");
+    } catch {
+      setShareStatus("failed");
+    }
   }
 
   async function runAction() {
@@ -109,6 +121,11 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
         {detail.description && <p className="preserve-lines" dir="auto">{detail.description}</p>}
         {detail.instructions && <p className="preserve-lines subtle" dir="auto">{detail.instructions}</p>}
         <p className="competition-facts"><span><Icon name="calendar" size={17}/><bdi>{displayDate(detail.opensAt, language)} – {displayDate(detail.closesAt, language)}</bdi></span><span><Icon name="clock" size={17}/>{t(`${detail.durationMinutes} min`, `${detail.durationMinutes} دقيقة`)}</span></p>
+        {detail.status !== "DRAFT" && <div className="record-actions">
+          <button className="button" type="button" onClick={() => copyCompetitionLink(detail.id)}>{t("Copy competition link", "نسخ رابط المسابقة")}</button>
+          <Link className="link-button" href={`/competitions/${detail.id}`} prefetch={false}>{t("Student competition link", "رابط المسابقة للطلاب")}</Link>
+          {shareStatus && <span className="note" role="status">{shareStatus === "copied" ? t("Link copied.", "تم نسخ الرابط.") : t("Copy the address from the student competition link.", "انسخ العنوان من رابط المسابقة للطلاب.")}</span>}
+        </div>}
         {admin && <div className="record-actions">
           {detail.status === "DRAFT" && <button className="button" type="button" disabled={busy} onClick={edit}>{t("Edit draft", "تعديل المسودة")}</button>}
           {detail.status === "DRAFT" && <button className="button primary" type="button" disabled={busy} onClick={() => setAction("activate")}>{actionText.activate}</button>}

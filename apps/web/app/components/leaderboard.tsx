@@ -6,7 +6,7 @@ import { ApiError, api, errorText, json, type Language, type Theme, type Transla
 import { ChristmasLights, SiteBrand } from "./site-brand";
 import { Icon } from "./ui-icon";
 
-type Row = { rank: number; name: string; grade: string; score: number; maxScore: number };
+type Row = { rank: number; name: string; grade: string; score: number; maxScore: number; competitions?: number };
 type Board = { scope: string; name: string | null; rows: Row[] };
 type PublicBoards = { title: string; boards: Board[] };
 type TiePolicy = "SCORE_THEN_TIME" | "SCORE_ONLY";
@@ -19,7 +19,7 @@ function boardName(board: Board, t: Translate) {
   return board.name ?? t("Overall", "جميع الصفوف");
 }
 
-function BoardView({ boards, t }: { boards: Board[]; t: Translate }) {
+function BoardView({ boards, t, cumulative = false }: { boards: Board[]; t: Translate; cumulative?: boolean }) {
   const [scope, setScope] = useState("");
   const selected = boards.find(board => board.scope === scope) ?? boards[0];
   if (!selected) return <p className="note">{t("No boards selected.", "لم تُحدَّد أي لوحة.")}</p>;
@@ -27,7 +27,7 @@ function BoardView({ boards, t }: { boards: Board[]; t: Translate }) {
     {boards.length > 1 && <nav className="record-actions" aria-label={t("Leaderboard scope", "نطاق لوحة الترتيب")}>
       {boards.map(board => <button key={board.scope} className="button" type="button" aria-pressed={board.scope === selected.scope} onClick={() => setScope(board.scope)}>{boardName(board, t)}</button>)}
     </nav>}
-    <h3>{boardName(selected, t)}</h3>
+    {!cumulative && <h3>{boardName(selected, t)}</h3>}
     {selected.rows.length === 0 ? <p className="note">{t("No completed attempts yet.", "لا توجد محاولات مكتملة بعد.")}</p>
       : <div className="table-wrap" role="region" tabIndex={0} aria-label={boardName(selected, t)}>
         <table className="roster-table data-table">
@@ -35,17 +35,75 @@ function BoardView({ boards, t }: { boards: Board[]; t: Translate }) {
             <th scope="col">{t("Rank", "الترتيب")}</th>
             <th scope="col">{t("Full name", "الاسم الكامل")}</th>
             <th scope="col">{t("Grade", "الصف")}</th>
-            <th scope="col">{t("Score", "النتيجة")}</th>
+            {cumulative && <th scope="col">{t("Competitions", "المسابقات")}</th>}
+            <th scope="col">{cumulative ? t("Total points", "مجموع النقاط") : t("Score", "النتيجة")}</th>
           </tr></thead>
           <tbody>{selected.rows.map((row, index) => <tr key={index}>
             <td>{row.rank}</td>
             <td className="leaderboard-name"><bdi>{row.name}</bdi></td>
             <td><bdi>{row.grade}</bdi></td>
-            <td><bdi>{row.score} / {row.maxScore}</bdi></td>
+            {cumulative && <td>{row.competitions}</td>}
+            <td><bdi>{cumulative ? row.score : `${row.score} / ${row.maxScore}`}</bdi></td>
           </tr>)}</tbody>
         </table>
       </div>}
   </div>;
+}
+
+function overallTitle(t: Translate) {
+  return t("Across-competition leaderboard", "لوحة ترتيب جميع المسابقات");
+}
+
+function overallExplanation(t: Translate) {
+  return t("Ranks use total points from published competition results.", "يعتمد الترتيب على مجموع النقاط من نتائج المسابقات المنشورة.");
+}
+
+export function AdminOverallLeaderboard({ t }: { t: Translate }) {
+  const path = "/admin/leaderboards/all";
+  const [view, setView] = useState<(PublicBoards & { published: boolean }) | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [announcement, setAnnouncement] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    api<PublicBoards & { published: boolean }>(path, { signal: controller.signal }).then(setView).catch(error => {
+      if (!controller.signal.aborted) setError(error);
+    });
+    return () => controller.abort();
+  }, [path]);
+
+  async function changeVisibility(published: boolean) {
+    setBusy(true);
+    setError(null);
+    setAnnouncement("");
+    try {
+      setView(await api<PublicBoards & { published: boolean }>(path, json("PUT", { published })));
+      setAnnouncement(published ? t("Leaderboard published.", "تم نشر لوحة الترتيب.") : t("Leaderboard unpublished.", "تم إلغاء نشر لوحة الترتيب."));
+    } catch (error) {
+      setError(error);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="form-stack" aria-labelledby="overall-leaderboard-heading">
+    <h1 id="overall-leaderboard-heading">{overallTitle(t)}</h1>
+    <p className="subtle">{overallExplanation(t)}</p>
+    {error ? <p role="alert" className="notice error">{errorText(error, t)}</p> : null}
+    {!view && !error && <p role="status">{t("Loading standings…", "جارٍ تحميل الترتيب…")}</p>}
+    {view && <div className="panel form-stack">
+      <BoardView boards={view.boards} t={t} cumulative/>
+      <p className="note">{t("The public link shows full names and updates as competition results are published.", "يعرض الرابط العام الأسماء الكاملة ويتم تحديثه عند نشر نتائج المسابقات.")}</p>
+      <div className="record-actions">
+        {!view.published ? <button type="button" className="button primary" disabled={busy} onClick={() => changeVisibility(true)}>{t("Publish overall leaderboard", "نشر لوحة ترتيب جميع المسابقات")}</button>
+          : <>
+            <Link className="button" href="/leaderboards/all" prefetch={false}>{t("Open public leaderboard", "فتح لوحة الترتيب العامة")}</Link>
+            <button type="button" className="button" disabled={busy} onClick={() => changeVisibility(false)}>{t("Unpublish overall leaderboard", "إلغاء نشر لوحة ترتيب جميع المسابقات")}</button>
+          </>}
+      </div>
+      <p role="status">{announcement}</p>
+    </div>}
+  </section>;
 }
 
 export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
@@ -137,6 +195,7 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
 
 export function PublicLeaderboard({ id, language, theme }: { id: string; language: Language; theme: Theme }) {
   const t: Translate = (en, ar) => language === "ar" ? ar : en;
+  const cumulative = id === "all";
   const [boards, setBoards] = useState<PublicBoards | null>(null);
   const [error, setError] = useState<unknown>(null);
   useEffect(() => {
@@ -164,10 +223,13 @@ export function PublicLeaderboard({ id, language, theme }: { id: string; languag
     <main id="main-content" className="student-shell form-stack public-leaderboard">
       {!christmas && <div>{back}</div>}
       <div className="leaderboard-heading">
-        <h1 dir="auto">{boards?.title ?? t("Leaderboard", "لوحة الترتيب")}</h1>
+        <h1 dir="auto">{cumulative ? overallTitle(t) : boards?.title ?? t("Leaderboard", "لوحة الترتيب")}</h1>
         {christmas && <div className="leaderboard-art" aria-hidden="true"/>}
       </div>
-      {boards ? <div className="panel"><BoardView boards={boards.boards} t={t}/></div>
+      {boards ? <div className="panel form-stack">
+        {cumulative && <p className="subtle">{overallExplanation(t)}</p>}
+        <BoardView boards={boards.boards} t={t} cumulative={cumulative}/>
+      </div>
         : error ? <p role="alert">{error instanceof ApiError && [400, 404].includes(error.status) ? t("This leaderboard is unavailable.", "لوحة الترتيب غير متاحة.") : errorText(error, t)}</p>
           : <p role="status">{t("Loading standings…", "جارٍ تحميل الترتيب…")}</p>}
     </main>

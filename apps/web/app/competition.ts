@@ -12,6 +12,7 @@ export type Attempt = {
 export type StudentCompetition = {
   id: string; title: string; description?: string; instructions: string; opensAt: string; closesAt: string; durationMinutes: number;
   questionCount: number; status: string; attemptId: string | null; attemptStatus: AttemptStatus | null;
+  leaderboardPublished: boolean;
   result: { score: number; maxScore: number; rank: number } | null;
 };
 export type CompetitionQuestion = Question & {

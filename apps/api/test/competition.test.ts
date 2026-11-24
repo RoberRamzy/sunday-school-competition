@@ -494,6 +494,49 @@ test('legacy grades require matching frozen questions for Overall and drafts can
   assert.ok(await db.question.findUnique({ where: { id: mcq.id } }));
 });
 
+test('overall leaderboard totals published results, shares ranks and removes deleted scores', { skip: !databaseUrl }, async () => {
+  const staffPath = '/admin/leaderboards/all';
+  const publicPath = '/leaderboards/all';
+  const makeCompetition = (title: string, published: boolean) => db.competition.create({ data: {
+    title, instructions: '', status: 'CLOSED', opensAt: new Date(minute(-5)),
+    closesAt: new Date(minute(-1)), durationMinutes: 5, publishedAt: published ? new Date() : null,
+  } });
+  const [first, second, unpublished] = await Promise.all([
+    makeCompetition('Overall fixture 1', true), makeCompetition('Overall fixture 2', true),
+    makeCompetition('Overall fixture unpublished', false),
+  ]);
+  const names = ['Overall A', 'Overall B', 'Overall C'];
+  const roster = await Promise.all(names.map(fullName => db.student.create({ data: {
+    fullName, displayLabel: fullName, gradeId,
+  } })));
+  const startedAt = new Date(minute(-4));
+  const expiresAt = new Date(minute(-1));
+  const attempt = (competitionId: string, index: number, score: number, status: 'SUBMITTED' | 'TIMED_OUT' | 'INVALIDATED' = 'SUBMITTED') =>
+    ({ competitionId, studentId: roster[index].id, gradeId, score, maxScore: 200, status, startedAt, expiresAt,
+      finishedAt: expiresAt, submittedAt: status === 'SUBMITTED' ? expiresAt : null });
+  await db.attempt.createMany({ data: [
+    attempt(first.id, 0, 80), attempt(second.id, 0, 40), attempt(first.id, 1, 120, 'TIMED_OUT'),
+    attempt(second.id, 2, 90), attempt(unpublished.id, 2, 180), attempt(second.id, 1, 170, 'INVALIDATED'),
+  ] });
+
+  const rows = (board: Leaderboard['publication']) => board.boards[0].rows.filter(row => names.includes(row.name));
+  assert.equal((await request(publicPath)).status, 404);
+  assert.equal((await request(staffPath, servant)).status, 403);
+  assert.equal((await request(staffPath, servant, { published: true }, 'PUT')).status, 403);
+  const preview = await ok<Leaderboard['publication'] & { published: boolean }>(request(staffPath, admin));
+  assert.equal(preview.published, false);
+  assert.deepEqual(rows(preview).map(({ name, rank, score }) => [name, rank, score]),
+    [['Overall A', 1, 120], ['Overall B', 1, 120], ['Overall C', 2, 90]]);
+  await ok(request(staffPath, admin, { published: true }, 'PUT'));
+  assert.deepEqual(rows(await ok<Leaderboard['publication']>(request(publicPath))), rows(preview));
+  assert.equal((await request('/admin/competitions/' + second.id, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
+  const adjusted = await ok<Leaderboard['publication']>(request(publicPath));
+  assert.deepEqual(rows(adjusted).map(({ name, rank, score }) => [name, rank, score]),
+    [['Overall B', 1, 120], ['Overall A', 2, 80]]);
+  await ok(request(staffPath, admin, { published: false }, 'PUT'));
+  assert.equal((await request(publicPath)).status, 404);
+});
+
 test('permanent deletion removes only the selected competition and student results, including published snapshots', { skip: !databaseUrl }, async () => {
   const fixture = async (index: number) => {
     const displayLabel = `Delete fixture ${index}`;

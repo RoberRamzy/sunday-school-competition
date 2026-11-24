@@ -8,6 +8,7 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
   const originalTheme = await (await success(await api(admin,'/appearance'))).json();
   let fixtureStudentId;
   let fixtureCompetition;
+  let overallPublished = false;
   try {
     const {student,grade,pin,activationCode} = await studentFixture(admin);
     fixtureStudentId = student.id;
@@ -15,6 +16,7 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     await success(await api(admin, '/admin/students/' + student.id, 'PATCH', {fullName}));
     const alice = await context(engine,{viewport:{width:390,height:844}});
     await success(await api(alice,'/auth/activate','POST',{gradeId:grade.id,studentId:student.id,pin,activationCode}));
+    await success(await api(alice,'/auth/logout','POST',{}));
     const create = async (route,data) => (await success(await api(admin,route,'POST',data))).json();
     const title = 'QA competition '+crypto.randomUUID();
     const staffPage = await admin.newPage();
@@ -43,6 +45,20 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     fixtureCompetition = competition;
     const blue = draft.questions[0].correctOrder[0];
     await create(competition+'/activate',{});
+    await staffPage.reload();
+    await staffPage.getByRole('button',{name:'Competitions',exact:true}).click();
+    await staffPage.getByRole('article').filter({hasText:title}).getByRole('button',{name:'Open competition'}).click();
+    const studentLink = await staffPage.getByRole('link',{name:'Student competition link'}).getAttribute('href');
+    const page = await alice.newPage();
+    await page.goto(studentLink);
+    await page.getByRole('combobox').first().selectOption(grade.id);
+    await page.getByRole('combobox').nth(1).selectOption(student.id);
+    await page.locator('input[name=pin]').fill(pin);
+    await page.locator('form').getByRole('button',{name:'Sign in'}).click();
+    await page.getByRole('heading',{name:title,exact:true}).waitFor();
+    await page.getByRole('button',{name:'Confirm and start'}).waitFor();
+    const unopened = await (await success(await api(alice,'/student/competitions/'+draft.id))).json();
+    assert.equal(unopened.attemptId,null);
     const start = async()=> (await success(await api(alice,'/competitions/'+draft.id+'/start','POST',{}))).json();
     const [attempt,retry] = await Promise.all([start(),start()]);
     assert.equal(attempt.id,retry.id);
@@ -51,8 +67,7 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     assert.ok(!('correctOrder' in attempt.question));
 
     const path='/attempts/'+attempt.id;
-    const page=await alice.newPage();
-    await page.goto('/');
+    await page.reload();
     await page.getByText(title,{exact:true}).waitFor();
     await page.getByRole('button',{name:'Continue attempt'}).click();
     await page.getByRole('heading',{name:'Select blue.'}).waitFor();
@@ -107,10 +122,28 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     await publicTable.getByRole('columnheader',{name:'Full name',exact:true}).waitFor();
     await publicTable.getByRole('cell',{name:fullName,exact:true}).waitFor();
     assert.equal(await publicTable.getByRole('cell',{name:student.displayLabel,exact:true}).count(),0);
+    await page.reload();
+    await page.getByRole('link',{name:'Competition leaderboard',exact:true}).waitFor();
     await staffPage.getByRole('button',{name:'Unpublish leaderboard'}).click();
     await publicLink.waitFor({state:'hidden'});
     await publicPage.reload();
     await publicPage.getByText('This leaderboard is unavailable.').waitFor();
+    const overallPath = '/leaderboards/all';
+    assert.equal((await api(visitor,overallPath)).status(),404);
+    await staffPage.getByRole('button',{name:'Overall leaderboard',exact:true}).click();
+    await staffPage.getByRole('cell',{name:fullName,exact:true}).waitFor();
+    overallPublished = true;
+    await staffPage.getByRole('button',{name:'Publish overall leaderboard',exact:true}).click();
+    await staffPage.getByRole('link',{name:'Open public leaderboard'}).waitFor();
+    await publicPage.goto(overallPath);
+    await publicPage.getByRole('heading',{name:'Across-competition leaderboard'}).waitFor();
+    await publicPage.getByRole('cell',{name:fullName,exact:true}).waitFor();
+    await staffPage.getByRole('button',{name:'Unpublish overall leaderboard',exact:true}).click();
+    await staffPage.getByText('Leaderboard unpublished.',{exact:true}).waitFor();
+    assert.equal((await api(visitor,overallPath)).status(),404);
+    overallPublished = false;
+    await staffPage.getByRole('button',{name:'Competitions',exact:true}).click();
+    await staffPage.getByRole('article').filter({hasText:title}).getByRole('button',{name:'Open competition'}).click();
     await staffPage.getByRole('button',{name:'Delete competition',exact:true}).click();
     const prompt = staffPage.getByRole('dialog',{name:'Delete competition'});
     assert.equal(await prompt.getByRole('button',{name:'Delete permanently'}).isEnabled(),false);
@@ -124,6 +157,7 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
 
   } finally {
     try {
+      if (overallPublished) await api(admin,'/admin/leaderboards/all','PUT',{published:false});
       if (fixtureCompetition) {
         await api(admin,fixtureCompetition+'/leaderboard/unpublish','POST',{});
         await api(admin,fixtureCompetition+'/close','POST',{});

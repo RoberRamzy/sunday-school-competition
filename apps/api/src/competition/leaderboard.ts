@@ -18,6 +18,7 @@ const settings = z.strictObject({
   scopes: z.array(z.union([z.literal('overall'), z.uuid()])).max(51),
 });
 const revisionInput = z.strictObject({ revision: z.string().regex(/^[a-f0-9]{64}$/) });
+const overallVisibility = z.strictObject({ published: z.boolean() });
 type Settings = z.infer<typeof settings>;
 
 const standing = z.object({ rank: z.number(), grade: z.string(), score: z.number(), maxScore: z.number() });
@@ -193,12 +194,79 @@ export class LeaderboardService {
       return this.readPublication(tx, competition);
     }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
   }
+
+  private async overallStandings(tx: Prisma.TransactionClient) {
+    const rows = await tx.$queryRaw<{
+      rank: number; name: string; grade: string; score: number; maxScore: number; competitions: number;
+    }[]>`
+      WITH totals AS (
+        SELECT a."studentId", SUM(a."score") AS score, SUM(a."maxScore") AS maximum,
+               COUNT(DISTINCT a."competitionId") AS competitions
+        FROM "Attempt" a
+        JOIN "Competition" c ON c.id = a."competitionId" AND c."publishedAt" IS NOT NULL
+        WHERE a.status IN ('SUBMITTED', 'TIMED_OUT')
+        GROUP BY a."studentId"
+      )
+      SELECT DENSE_RANK() OVER (ORDER BY t.score DESC)::integer AS rank,
+             s."fullName" AS name, g.name AS grade, t.score::double precision AS score,
+             t.maximum::double precision AS "maxScore", t.competitions::integer AS competitions
+      FROM totals t
+      JOIN "Student" s ON s.id = t."studentId"
+      JOIN "Grade" g ON g.id = s."gradeId"
+      ORDER BY t.score DESC, s."fullName", s.id
+    `;
+    return { title: 'Across-competition leaderboard', boards: [{ scope: 'overall', name: null, rows }] };
+  }
+
+  async overallPublished(tx: Prisma.TransactionClient = this.db) {
+    const setting = await tx.overallLeaderboard.findUnique({ where: { id: 1 } });
+    return { published: setting?.published ?? false };
+  }
+
+  overallPreview(actor: StaffPrincipal) {
+    return this.db.$transaction(async tx => {
+      await lockStaff(tx, actor);
+      return { ...await this.overallPublished(tx), ...await this.overallStandings(tx) };
+    });
+  }
+
+  setOverallVisibility(actor: StaffPrincipal, published: boolean) {
+    return this.db.$transaction(async tx => {
+      await lockStaff(tx, actor);
+      await tx.overallLeaderboard.upsert({
+        where: { id: 1 }, create: { id: 1, published }, update: { published },
+      });
+      await audit(tx, actor, published ? 'OVERALL_LEADERBOARD_PUBLISHED' : 'OVERALL_LEADERBOARD_UNPUBLISHED', {});
+      return { published, ...await this.overallStandings(tx) };
+    });
+  }
+
+  overallPublic() {
+    return this.db.$transaction(async tx => {
+      const { published } = await this.overallPublished(tx);
+      if (!published) throw new NotFoundException('Leaderboard is not published');
+      return this.overallStandings(tx);
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+  }
 }
 
 @ApiTags('Leaderboards')
 @Controller()
 export class LeaderboardController {
   constructor(private readonly boards: LeaderboardService) {}
+
+  @Roles('SUPER_ADMIN')
+  @Get('admin/leaderboards/all')
+  overallPreview(@Actor() actor: StaffPrincipal) {
+    return this.boards.overallPreview(actor);
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Put('admin/leaderboards/all')
+  @bodyDocs(overallVisibility)
+  setOverallVisibility(@Actor() actor: StaffPrincipal, @body(overallVisibility) input: z.infer<typeof overallVisibility>) {
+    return this.boards.setOverallVisibility(actor, input.published);
+  }
 
   @Roles('SUPER_ADMIN')
   @Get('admin/competitions/:id/leaderboard')
@@ -224,6 +292,18 @@ export class LeaderboardController {
   @Post('admin/competitions/:id/leaderboard/unpublish')
   unpublish(@Actor() actor: StaffPrincipal, @param('id') id: string) {
     return this.boards.unpublish(actor, id);
+  }
+
+  @Public()
+  @Get('leaderboards/all/visibility')
+  overallVisibility() {
+    return this.boards.overallPublished();
+  }
+
+  @Public()
+  @Get('leaderboards/all')
+  overallPublic() {
+    return this.boards.overallPublic();
   }
 
   @Public()

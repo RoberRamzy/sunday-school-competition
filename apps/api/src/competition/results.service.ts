@@ -149,6 +149,7 @@ export class ResultsService {
           id: competition.id, title, description, instructions, opensAt, closesAt, durationMinutes,
           questionCount: selection._count.questions, status: effectiveStatus(competition, now),
           attemptId: attempt?.id ?? null, attemptStatus: attempt?.status ?? null, result,
+          leaderboardPublished: competition.publicLeaderboard !== null,
         });
       }
       items.sort((a, b) => b.opensAt.getTime() - a.opensAt.getTime());

@@ -9,8 +9,8 @@ import { Staff } from "./staff";
 import { Student } from "./student";
 import { ChristmasLights, SiteBrand } from "./site-brand";
 
-export function Portal({ staffEntry = false, initialLanguage, initialTheme, initialPrincipal }: {
-  staffEntry?: boolean; initialLanguage: Language; initialTheme: Theme; initialPrincipal: Principal | null;
+export function Portal({ staffEntry = false, competitionId, initialLanguage, initialTheme, initialPrincipal }: {
+  staffEntry?: boolean; competitionId?: string; initialLanguage: Language; initialTheme: Theme; initialPrincipal: Principal | null;
 }) {
   const [language, setLanguage] = useState(initialLanguage);
   const [principal, setPrincipal] = useState(initialPrincipal);
@@ -80,7 +80,12 @@ export function Portal({ staffEntry = false, initialLanguage, initialTheme, init
     </header>
     {error ? <p className="site-notice notice error" role="alert">{errorText(error, t)}</p> : null}
     {!principal ? <SignIn staff={staffEntry} t={t} theme={theme} onSignIn={(next) => { setError(null); setPrincipal(next); }} />
-      : principal.role === "STUDENT" ? <Student principal={principal} language={language} t={t} />
+      : principal.role === "STUDENT" ? <Student principal={principal} language={language} t={t} competitionId={competitionId}/>
+      : competitionId ? <main id="main-content" className="student-shell form-stack">
+        <h1>{t("Student competition link", "رابط المسابقة للطلاب")}</h1>
+        <p>{t("Sign out of your staff account to sign in as a student.", "سجّل الخروج من حساب الخادم لتسجيل الدخول كطالب.")}</p>
+        <div><Link className="button" href="/staff">{t("Go to staff dashboard", "الانتقال إلى لوحة الخدام")}</Link></div>
+      </main>
       : <Staff principal={principal} theme={theme} setTheme={setTheme} language={language} />}
     <footer className="site-footer"><span>{t("Sunday School Competition", "مسابقة مدارس الأحد")}</span><span>{t("Need help? Contact your servant.", "تحتاج مساعدة؟ تواصل مع خادمك.")}</span></footer>
   </div>;
