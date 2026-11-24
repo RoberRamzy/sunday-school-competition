@@ -14,7 +14,16 @@ test('Excel handout → first activation → fresh-browser PIN login → session
     await page.getByRole('combobox').nth(0).selectOption(grade.id);
     await page.getByRole('combobox').nth(1).selectOption(student.id);
     await page.getByLabel('One-time password',{exact:true}).fill(activationCode);
+    const pinField = page.getByLabel('Choose a 6-digit PIN',{exact:true});
+    await pinField.fill('123');
+    await pinField.press('Tab');
+    await page.getByText('Enter exactly six digits.',{exact:true}).waitFor();
     await page.getByLabel('Choose a 6-digit PIN',{exact:true}).fill(pin);
+    const confirmation = page.getByLabel('Confirm PIN',{exact:true});
+    await confirmation.fill('123456');
+    await confirmation.press('Tab');
+    await page.getByText('The two entries don’t match.',{exact:true}).waitFor();
+    await confirmation.fill(pin);
     const activated = page.waitForResponse(resp=>resp.url().endsWith('/api/auth/activate'));
     await page.getByRole('button',{name:'Activate account'}).click();
     assert.ok((await activated).ok());

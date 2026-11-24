@@ -97,4 +97,12 @@ export class RosterController {
   updateServant(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(servantPatch) input: z.infer<typeof servantPatch>) {
     return this.roster.saveServant(actor, input, id);
   }
+
+  @Post('servants/:id/reset-credential')
+  @Roles('SUPER_ADMIN')
+  @HttpCode(200)
+  @bodyDocs(empty)
+  resetServantCredential(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(empty) _: object) {
+    return this.roster.resetServantCredential(actor, id);
+  }
 }

@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Prisma } from '@prisma/client';
 import { Workbook } from 'exceljs';
 import { z } from 'zod';
-import { digest, hashPassword, randomToken } from '../auth/credentials';
+import { digest, randomToken } from '../auth/credentials';
 import { audit, gradeScope, lockStaff, requireGrade, StaffPrincipal } from '../auth/principal';
 import { Database, isDatabaseError } from '../database/database.module';
 import { servantInput, servantPatch, studentImport, studentInput, studentPatch } from './roster.input';
@@ -14,6 +14,12 @@ const servantFields = {
 
 function mapServant({ grades, ...staff }: Prisma.AdminUserGetPayload<{ select: typeof servantFields }>) {
   return { ...staff, gradeIds: grades.map((grade) => grade.gradeId).sort() };
+}
+
+function servantSetupCode() {
+  const setupCode = randomToken(18);
+  const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000);
+  return { setupCode, expiresAt, data: { setupCodeHash: digest(setupCode), setupCodeExpiresAt: expiresAt } };
 }
 
 @Injectable()
@@ -208,34 +214,59 @@ export class RosterService {
   }
 
   async saveServant(actor: StaffPrincipal, input: z.infer<typeof servantInput> | z.infer<typeof servantPatch>, id?: string) {
-    const { gradeIds, password, ...fields } = input;
-    const passwordHash = password === undefined ? undefined : await hashPassword(password);
+    const { gradeIds, ...fields } = input;
     const assignments = gradeIds?.map((gradeId) => ({ gradeId }));
+    const suspended = 'status' in fields && fields.status === 'SUSPENDED';
     try {
       return await this.db.$transaction(async (tx) => {
         await lockStaff(tx, actor);
+        const setup = id ? undefined : servantSetupCode();
         const servant = id
           ? await tx.adminUser.update({
               where: { id, role: 'SERVANT' },
-              data: { ...fields, passwordHash, grades: assignments && { deleteMany: {}, create: assignments } },
+              data: {
+                ...fields,
+                ...(suspended ? { setupCodeHash: null, setupCodeExpiresAt: null } : {}),
+                grades: assignments && { deleteMany: {}, create: assignments },
+              },
               select: servantFields,
             })
           : await tx.adminUser.create({
-              data: { fullName: fields.fullName!, username: fields.username!, passwordHash: passwordHash!, grades: { create: assignments } },
+              data: { fullName: fields.fullName!, username: fields.username!, ...setup!.data, grades: { create: assignments } },
               select: servantFields,
             });
-        if (passwordHash || servant.status === 'SUSPENDED') {
+        if (servant.status === 'SUSPENDED') {
           await tx.session.updateMany({ where: { staffId: servant.id, revokedAt: null }, data: { revokedAt: new Date() } });
         }
         await audit(tx, actor, id ? 'SERVANT_UPDATED' : 'SERVANT_CREATED', {
           servantId: servant.id, status: servant.status, gradeIds: servant.grades.map((grade) => grade.gradeId),
         });
-        return mapServant(servant);
+        return { ...mapServant(servant), ...(setup && { setupCode: setup.setupCode, expiresAt: setup.expiresAt }) };
       });
     } catch (error) {
       if (isDatabaseError(error, 'P2002')) throw new ConflictException('This username is already in use');
       if (isDatabaseError(error, 'P2025')) throw new NotFoundException('Servant was not found');
       if (isDatabaseError(error, 'P2003')) throw new NotFoundException('Grade was not found');
+      throw error;
+    }
+  }
+
+  async resetServantCredential(actor: StaffPrincipal, id: string) {
+    try {
+      return await this.db.$transaction(async (tx) => {
+        await lockStaff(tx, actor);
+        const setup = servantSetupCode();
+        const { username } = await tx.adminUser.update({
+          where: { id, role: 'SERVANT', status: 'ACTIVE' },
+          data: { ...setup.data, passwordHash: null },
+          select: { username: true },
+        });
+        await tx.session.updateMany({ where: { staffId: id, revokedAt: null }, data: { revokedAt: new Date() } });
+        await audit(tx, actor, 'SERVANT_CREDENTIAL_RESET', { servantId: id });
+        return { username, setupCode: setup.setupCode, expiresAt: setup.expiresAt };
+      });
+    } catch (error) {
+      if (isDatabaseError(error, 'P2025')) throw new NotFoundException('Active servant was not found');
       throw error;
     }
   }

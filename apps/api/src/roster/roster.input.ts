@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { name, newPassword, username } from '../system/input';
+import { name, username } from '../system/input';
 
 export const gradeInput = z.strictObject({ name });
 export const studentFields = z.strictObject({ fullName: name, displayLabel: name });
@@ -19,7 +19,6 @@ export const handoutInput = z.strictObject({
 export const servantInput = z.strictObject({
   username,
   fullName: name,
-  password: newPassword,
   gradeIds: z.array(z.uuid()).max(100).refine((ids) => new Set(ids).size === ids.length, 'Assign each grade only once'),
 });
 export const servantPatch = servantInput.partial().extend({ status: z.enum(['ACTIVE', 'SUSPENDED']).optional() });

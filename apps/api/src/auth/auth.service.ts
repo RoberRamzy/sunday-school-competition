@@ -15,6 +15,7 @@ export function sessionToken(req: Request) {
 
 type StudentLogin = { gradeId: string; studentId: string; pin: string; activationCode?: string };
 type StaffLogin = { username: string; password: string };
+type StaffSetup = StaffLogin & { setupCode: string };
 
 @Injectable()
 export class AuthService {
@@ -85,6 +86,34 @@ export class AuthService {
       const current = await tx.adminUser.findUnique({ where });
       if (current?.status !== 'ACTIVE' || current.passwordHash !== staff?.passwordHash) throw invalid();
       return this.rotate(tx, { id: current.id, role: current.role, displayName: current.fullName });
+    });
+  }
+
+  async setupServant(input: StaffSetup, ip: string) {
+    await this.throttle('staff-ip', ip, 90, 60);
+    await this.throttle('staff-setup', input.username, 8, 600);
+    const where = {
+      username: input.username, role: 'SERVANT' as const, status: 'ACTIVE' as const,
+      passwordHash: null, setupCodeHash: digest(input.setupCode),
+    };
+    const invalid = () => new UnauthorizedException('Invalid credentials');
+    const eligible = await this.db.adminUser.findUnique({
+      where: { ...where, setupCodeExpiresAt: { gt: new Date() } }, select: { id: true },
+    });
+    if (!eligible) throw invalid();
+    const passwordHash = await hashPassword(input.password);
+    return this.db.$transaction(async tx => {
+      await tx.$queryRaw`SELECT id FROM "AdminUser" WHERE id = ${eligible.id}::uuid FOR UPDATE`;
+      const consumed = await tx.adminUser.updateMany({
+        where: { ...where, id: eligible.id, setupCodeExpiresAt: { gt: new Date() } },
+        data: { passwordHash, setupCodeHash: null, setupCodeExpiresAt: null },
+      });
+      if (consumed.count !== 1) throw invalid();
+      const staff = await tx.adminUser.findUniqueOrThrow({ where: { id: eligible.id } });
+      const principal = { id: staff.id, role: staff.role, displayName: staff.fullName };
+      const session = await this.rotate(tx, principal);
+      await audit(tx, principal, 'SERVANT_CREDENTIAL_SET', {});
+      return session;
     });
   }
 

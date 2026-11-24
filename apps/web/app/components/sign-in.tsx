@@ -8,6 +8,10 @@ import { Icon } from "./ui-icon";
 type Name = { id: string; displayLabel: string };
 type Mode = "login" | "activate";
 
+function normalizeDigits(value: string) {
+  return value.replace(/[٠-٩۰-۹]/g, digit => String(digit.charCodeAt(0) - (digit >= "۰" ? 0x06f0 : 0x0660)));
+}
+
 export function SignIn({ staff, theme, t, onSignIn }: {
   staff: boolean; theme: Theme; t: Translate; onSignIn: (principal: Principal) => void;
 }) {
@@ -22,6 +26,19 @@ export function SignIn({ staff, theme, t, onSignIn }: {
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [credential, setCredential] = useState("");
+  const [confirm, setConfirm] = useState("");
+  const [credentialChecked, setCredentialChecked] = useState(false);
+  const [confirmationChecked, setConfirmationChecked] = useState(false);
+  const activating = mode === "activate";
+  const validPin = /^[0-9]{6}$/.test(credential);
+  const validStaffCredential = credential.length === 6 || (!activating && credential.length >= 12);
+  const credentialInvalid = staff ? !validStaffCredential : !validPin;
+  const confirmationInvalid = activating && confirm !== credential;
+
+  function normalizeCredential(value: string) {
+    return !staff || /^[0-9٠-٩۰-۹]{6}$/.test(value) ? normalizeDigits(value) : value;
+  }
 
   useEffect(() => {
     if (staff) return;
@@ -50,13 +67,17 @@ export function SignIn({ staff, theme, t, onSignIn }: {
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setCredentialChecked(true);
+    setConfirmationChecked(activating);
+    if (credentialInvalid || confirmationInvalid) return;
     setBusy(true);
     const form = new FormData(event.currentTarget);
     const request = staff
-      ? { username: String(form.get("username")).trim(), password: form.get("password") }
-      : { gradeId, studentId, pin: form.get("pin"), ...(mode === "activate" ? { activationCode: String(form.get("activationCode")).trim() } : {}) };
+      ? { username: String(form.get("username")).trim(), password: normalizeCredential(credential),
+          ...(activating ? { setupCode: String(form.get("activationCode")).trim() } : {}) }
+      : { gradeId, studentId, pin: credential, ...(activating ? { activationCode: String(form.get("activationCode")).trim() } : {}) };
     try {
-      const principal = await api<Principal>(`/auth/${staff ? "staff-login" : mode}`, json("POST", request));
+      const principal = await api<Principal>(`/auth/${staff ? (activating ? "staff-setup" : "staff-login") : mode}`, json("POST", request));
       onSignIn(principal);
     } catch (error) {
       setError(error);
@@ -65,8 +86,13 @@ export function SignIn({ staff, theme, t, onSignIn }: {
     }
   }
 
-  const activating = !staff && mode === "activate";
-  const action = activating ? t("Activate account", "تفعيل الحساب") : t("Sign in", "تسجيل الدخول");
+  const action = activating
+    ? staff ? t("Save and sign in", "حفظ وتسجيل الدخول") : t("Activate account", "تفعيل الحساب")
+    : t("Sign in", "تسجيل الدخول");
+  const credentialHint = staff
+    ? activating ? t("Enter exactly six characters, or six digits for a PIN.", "أدخل ستة أحرف بالضبط، أو ستة أرقام للرمز.")
+      : t("Enter your password or six-digit PIN.", "أدخل كلمة المرور أو الرمز المكوّن من ستة أرقام.")
+    : t("Enter exactly six digits.", "أدخل ستة أرقام بالضبط.");
   return <main id="main-content" className="entry">
     <section className="welcome" aria-labelledby="welcome-title">
       <div className="welcome-copy">
@@ -79,16 +105,21 @@ export function SignIn({ staff, theme, t, onSignIn }: {
     </section>
 
     <section className="entry-card" aria-labelledby="entry-heading">
-      {!staff && <div className="entry-modes" aria-label={t("Student account", "حساب الطالب")}>
+      <div className="entry-modes" aria-label={staff ? t("Staff account", "حساب الخادم") : t("Student account", "حساب الطالب")}>
         {(["login", "activate"] as const).map((value) => <button key={value} type="button" aria-pressed={mode === value} disabled={busy} onClick={() => {
           setMode(value);
           setShow(false);
           setError(null);
-        }}>{value === "login" ? t("Sign in", "تسجيل الدخول") : t("First time?", "أول مرة؟")}</button>)}
-      </div>}
-      <h2 id="entry-heading">{staff ? t("Staff sign in", "دخول الخدام") : activating ? t("Activate your account", "فعّل حسابك") : t("Welcome back", "مرحبًا بعودتك")}</h2>
+          setCredential("");
+          setConfirm("");
+          setCredentialChecked(false);
+          setConfirmationChecked(false);
+        }}>{value === "login" ? t("Sign in", "تسجيل الدخول") : staff ? t("Set up or reset", "إعداد أو إعادة ضبط") : t("First time?", "أول مرة؟")}</button>)}
+      </div>
+      <h2 id="entry-heading">{staff ? (activating ? t("Set your PIN or password", "اضبط الرمز أو كلمة المرور") : t("Staff sign in", "دخول الخدام")) : activating ? t("Activate your account", "فعّل حسابك") : t("Welcome back", "مرحبًا بعودتك")}</h2>
       <p className="entry-description">{staff
-        ? t("Use your staff username and password.", "استخدم اسم المستخدم وكلمة المرور.")
+        ? activating ? t("Enter the one-time setup code from your Super Admin.", "أدخل رمز الإعداد الذي أرسله مدير النظام.")
+          : t("Use your staff username and PIN or password.", "استخدم اسم المستخدم والرمز أو كلمة المرور.")
         : activating
           ? t("Use the one-time password given to you by your servant.", "استخدم كلمة المرور لمرة واحدة التي أعطاها لك خادمك.")
           : t("Choose your grade and name, then enter your six-digit PIN.", "اختر صفك واسمك، ثم أدخل رمزك المكوّن من ستة أرقام.")}</p>
@@ -122,19 +153,37 @@ export function SignIn({ staff, theme, t, onSignIn }: {
             }}>{t("Try again", "حاول مجددًا")}</button>
           </div>}
           {gradeId && nameLookup === "ready" && names.length === 0 && <p className="note">{t("This grade has no names to display. Check with your servant.", "لا توجد أسماء في هذا الصف. تواصل مع خادمك.")}</p>}
-          {activating && <label>{t("One-time password", "كلمة المرور لمرة واحدة")}<input name="activationCode" autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} required disabled={busy} dir="ltr" /></label>}
         </>}
-        <label htmlFor="entry-password">{staff ? t("Password", "كلمة المرور") : activating ? t("Choose a 6-digit PIN", "اختر رمزًا من ٦ أرقام") : t("6-digit PIN", "الرمز المكوّن من ٦ أرقام")}</label>
+        {activating && <label>{staff ? t("One-time setup code", "رمز الإعداد لمرة واحدة") : t("One-time password", "كلمة المرور لمرة واحدة")}<input name="activationCode" autoComplete="one-time-code" autoCapitalize="none" spellCheck={false} required disabled={busy} dir="ltr" /></label>}
+        <label htmlFor="entry-password">{staff ? t("PIN or password", "الرمز أو كلمة المرور") : activating ? t("Choose a 6-digit PIN", "اختر رمزًا من ٦ أرقام") : t("6-digit PIN", "الرمز المكوّن من ٦ أرقام")}</label>
         <div className="password-wrap">
-          <input id="entry-password" name={staff ? "password" : "pin"} type={show ? "text" : "password"} inputMode={staff ? undefined : "numeric"} pattern={staff ? undefined : "[0-9]{6}"} minLength={staff ? undefined : 6} maxLength={staff ? undefined : 6} autoComplete={activating ? "new-password" : "current-password"} required disabled={busy} dir="ltr" />
+          <input id="entry-password" name={staff ? "password" : "pin"} type={show ? "text" : "password"} inputMode={staff ? undefined : "numeric"}
+            maxLength={128} autoComplete={activating ? "new-password" : "current-password"}
+            value={credential} onChange={event => {
+              setCredential(staff && !activating ? event.target.value : normalizeCredential(event.target.value));
+              setError(null);
+            }}
+            onBlur={() => setCredentialChecked(true)} aria-invalid={credentialChecked && credentialInvalid}
+            aria-describedby={credentialChecked && credentialInvalid ? "credential-error" : undefined}
+            required disabled={busy} dir="ltr" />
           <button type="button" aria-label={show ? t("Hide password", "أخفِ كلمة المرور") : t("Show password", "أظهر كلمة المرور")} onClick={() => setShow(!show)}><Icon name={show ? "hide" : "eye"} size={19}/></button>
         </div>
+        {credentialChecked && credentialInvalid && <p id="credential-error" className="notice error" role="alert">{credentialHint}</p>}
+        {activating && <label>{staff ? t("Confirm PIN or password", "أكّد الرمز أو كلمة المرور") : t("Confirm PIN", "أكّد الرمز")}
+          <input name="confirmCredential" type={show ? "text" : "password"} inputMode={staff ? undefined : "numeric"} maxLength={128}
+            autoComplete="new-password" dir="ltr" value={confirm}
+            onChange={event => setConfirm(normalizeCredential(event.target.value))}
+            onBlur={() => setConfirmationChecked(true)} aria-invalid={confirmationChecked && confirmationInvalid}
+            aria-describedby={confirmationChecked && confirmationInvalid ? "credential-mismatch" : undefined} required disabled={busy}/>
+        </label>}
+        {confirmationChecked && confirmationInvalid && <p id="credential-mismatch" className="notice error" role="alert">{t("The two entries don’t match.", "القيمتان غير متطابقتين.")}</p>}
         {error ? <p role="alert" className="notice error">{errorText(error, t, true)}</p> : null}
         <button className="button primary entry-submit" disabled={busy || (!staff && !studentId)}>
           {busy ? t("Please wait…", "يرجى الانتظار…") : action}<span className="directional"><Icon name="arrow" size={19}/></span>
         </button>
       </form>
       {!staff && <p className="entry-help">{activating ? t("Need a one-time password? Ask your servant.", "تحتاج كلمة مرور لمرة واحدة؟ اسأل خادمك.") : t("Forgot your PIN? Ask your servant to reset it.", "نسيت الرمز؟ اطلب من خادمك إعادة ضبطه.")}</p>}
+      {staff && <p className="entry-help">{activating ? t("Need a new setup code? Ask your Super Admin.", "تحتاج رمز إعداد جديدًا؟ اطلبه من مدير النظام.") : t("Forgot your PIN or password? Ask your Super Admin for a setup code.", "نسيت الرمز أو كلمة المرور؟ اطلب رمز إعداد من مدير النظام.")}</p>}
       {staff && <Link className="entry-help" href="/">{t("Back to student sign in", "العودة إلى دخول الطلاب")}</Link>}
     </section>
   </main>;

@@ -11,12 +11,12 @@ test('regular staff import and delete a student and reach competition and overal
     admin = await adminSession(engine);
     const [grade] = await (await success(await api(admin,'/admin/grades'))).json();
     const username = 'qa-' + crypto.randomUUID();
-    const password = crypto.randomUUID();
+    const password = '004201';
     account = await (await success(await api(admin,'/admin/servants','POST',{
-      fullName:'QA Grade Staff',username,password,gradeIds:[grade.id],
+      fullName:'QA Grade Staff',username,gradeIds:[grade.id],
     }))).json();
     const staff = await context(engine);
-    await success(await api(staff,'/auth/staff-login','POST',{username,password}));
+    await success(await api(staff,'/auth/staff-setup','POST',{username,password,setupCode:account.setupCode}));
     const page=await staff.newPage();
     const name='QA roster '+crypto.randomUUID();
     await page.goto('/staff');
@@ -60,18 +60,49 @@ test('regular staff import and delete a student and reach competition and overal
   }
 });
 
-test('super admin can delete a staff account from the staff dashboard', async () => {
+test('super admin issues and resets a one-time setup code and can delete the staff account', async () => {
   const engine = await browser();
   try {
     const staff = await adminSession(engine);
     const username = 'qa-' + crypto.randomUUID();
     const name = 'QA Staff ' + username;
-    await success(await api(staff, '/admin/servants', 'POST', {
-      fullName: name, username, password: crypto.randomUUID(), gradeIds: [],
-    }));
     const page = await staff.newPage();
     await page.goto('/staff');
     await page.getByRole('button', {name:'Staff and grades'}).click();
+    await page.getByLabel('Full name',{exact:true}).fill(name);
+    await page.getByLabel('Username',{exact:true}).fill(username);
+    const saved = page.waitForResponse(response => response.url().endsWith('/api/admin/servants') && response.request().method() === 'POST');
+    await page.getByRole('button',{name:'Create servant and generate code'}).click();
+    const {id} = await (await success(await saved)).json();
+    const code = page.getByLabel('Setup code',{exact:true});
+    await code.waitFor();
+    const firstCode = await code.inputValue();
+    const servant = await context(engine);
+    const signIn = await servant.newPage();
+    async function setUp(setupCode, credential) {
+      await signIn.goto('/staff');
+      await signIn.getByRole('button',{name:'Set up or reset'}).click();
+      await signIn.getByLabel('Username',{exact:true}).fill(username);
+      await signIn.getByLabel('One-time setup code',{exact:true}).fill(setupCode);
+      const password = signIn.getByLabel('PIN or password',{exact:true});
+      await password.fill('12345');
+      await password.press('Tab');
+      await signIn.getByText('Enter exactly six characters, or six digits for a PIN.',{exact:true}).waitFor();
+      await password.fill(credential);
+      await signIn.getByLabel('Confirm PIN or password',{exact:true}).fill(credential);
+      await signIn.getByRole('button',{name:'Save and sign in'}).click();
+      await signIn.getByRole('heading',{name:'Student roster',exact:true}).waitFor();
+    }
+    await setUp(firstCode,'004201');
+    await page.getByRole('button',{name:'Done',exact:true}).click();
+    await page.getByLabel('Servant to manage').selectOption(id);
+    await page.getByRole('button',{name:'Reset PIN or password'}).click();
+    await page.getByRole('button',{name:'Confirm and generate code'}).click();
+    await code.waitFor();
+    const secondCode = await code.inputValue();
+    assert.notEqual(secondCode,firstCode);
+    assert.equal((await api(servant,'/auth/me')).status(),401);
+    await setUp(secondCode,'aB2cD4');
     const accounts = page.getByRole('region', {name:'Staff accounts'});
     const row = accounts.getByRole('row').filter({hasText:name});
     await row.getByRole('button', {name:'Delete staff account'}).click();

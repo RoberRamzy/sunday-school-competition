@@ -118,10 +118,12 @@ test('staff scope, CSRF and input validation protect roster and appearance', { s
   assert.deepEqual(await (await request('/appearance')).json(), { theme: 'christmas' });
 
   const servant = await request('/admin/servants', {
-    cookie: adminCookie, body: { fullName: 'Test Servant', username: 'test-servant', password: staffPassword, gradeIds: [grade1] },
+    cookie: adminCookie, body: { fullName: 'Test Servant', username: 'test-servant', gradeIds: [grade1] },
   });
   assert.equal(servant.status, 201, await servant.clone().text());
-  const login = await request('/auth/staff-login', { body: { username: 'test-servant', password: staffPassword } });
+  const account = await servant.json() as { id: string; setupCode: string };
+  const login = await request('/auth/staff-setup', { body: { username: 'test-servant', password: '123456', setupCode: account.setupCode } });
+  assert.equal(login.status, 200);
   const cookie = getCookie(login);
   assert.equal((await (await request('/admin/grades', { cookie })).json() as unknown[]).length, 1);
   assert.equal((await request(`/admin/students?gradeId=${grade2}`, { cookie })).status, 403);
@@ -140,7 +142,6 @@ test('staff scope, CSRF and input validation protect roster and appearance', { s
   const moveGrade = await request('/admin/grades', { cookie: adminCookie, body: { name: 'Servant move grade' } });
   assert.equal(moveGrade.status, 201);
   const destination = (await moveGrade.json() as { id: string }).id;
-  const account = await servant.json() as { id: string };
   assert.equal((await request('/admin/servants/' + account.id, {
     cookie: adminCookie, method: 'PATCH', body: { gradeIds: [grade1, destination] },
   })).status, 200);
@@ -152,6 +153,49 @@ test('staff scope, CSRF and input validation protect roster and appearance', { s
   assert.equal((await request('/admin/students/import', { cookie, body: { ...payload, gradeId: grade2 } })).status, 403);
   assert.equal((await request('/admin/students/import', { cookie, body: { ...payload, gradeId: grade1 } })).status, 200);
   assert.equal((await request('/admin/appearance', { cookie, method: 'PUT', body: { theme: 'classic' } })).status, 403);
+});
+
+test('one-time servant setup and recovery reject expired, replaced and reused codes', { skip: !databaseUrl }, async () => {
+  const username = 'setup-servant';
+  const created = await request('/admin/servants', {
+    cookie: adminCookie, body: { fullName: 'Setup Servant', username, gradeIds: [grade1] },
+  });
+  assert.equal(created.status, 201);
+  const { id, setupCode, expiresAt } = await created.json() as { id: string; setupCode: string; expiresAt: string };
+  assert.ok(Date.parse(expiresAt) > Date.now());
+  assert.equal((await db.adminUser.findUniqueOrThrow({ where: { id } })).passwordHash, null);
+  const setup = (code: string, password = '004201') =>
+    request('/auth/staff-setup', { body: { username, setupCode: code, password } });
+  const signIn = (password: string) => request('/auth/staff-login', { body: { username, password } });
+  const resetPath = '/admin/servants/' + id + '/reset-credential';
+  async function reset() {
+    const response = await request(resetPath, { cookie: adminCookie, body: {} });
+    assert.equal(response.status, 200);
+    return (await response.json() as { setupCode: string }).setupCode;
+  }
+  assert.equal((await signIn(setupCode)).status, 401);
+  assert.equal((await setup(setupCode, '12345')).status, 400);
+  assert.equal((await setup(setupCode, '1234567')).status, 400);
+  await db.adminUser.update({ where: { id }, data: { setupCodeExpiresAt: new Date(0) } });
+  assert.equal((await setup(setupCode)).status, 401);
+  const fresh = await reset();
+  assert.equal((await setup(setupCode)).status, 401);
+  const parallel = await Promise.all([setup(fresh), setup(fresh)]);
+  assert.deepEqual(parallel.map(response => response.status).sort(), [200, 401]);
+  assert.equal((await setup(fresh)).status, 401);
+  const signedIn = await signIn('004201');
+  assert.equal(signedIn.status, 200);
+  const cookie = getCookie(signedIn);
+  assert.equal((await request(resetPath, { cookie, body: {} })).status, 403);
+  const replacement = await reset();
+  assert.equal((await request('/auth/me', { cookie })).status, 401);
+  assert.equal((await signIn('004201')).status, 401);
+  assert.equal((await setup(replacement, 'aB2cD4')).status, 200);
+  assert.equal((await signIn('aB2cD4')).status, 200);
+  const stored = await db.adminUser.findUniqueOrThrow({ where: { id } });
+  assert.equal(stored.setupCodeHash, null);
+  assert.equal(stored.setupCodeExpiresAt, null);
+  assert.ok(stored.passwordHash && stored.passwordHash !== 'aB2cD4');
 });
 
 test('handout reissue, credential selection, parallel activation and session rotation', { skip: !databaseUrl }, async () => {

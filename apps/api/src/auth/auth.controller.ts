@@ -2,8 +2,7 @@ import { Controller, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { body, bodyDocs, empty, param } from '../system/input';
-import { username } from '../system/input';
+import { body, bodyDocs, empty, param, pin, username } from '../system/input';
 import { AuthService, cookieName, sessionToken } from './auth.service';
 import { Actor, Public } from './principal';
 import type { Principal } from './principal';
@@ -11,12 +10,17 @@ import type { Principal } from './principal';
 const studentLogin = z.strictObject({
   gradeId: z.uuid(),
   studentId: z.uuid(),
-  pin: z.string().regex(/^[0-9]{6}$/),
+  pin,
 });
 const activation = studentLogin.extend({
   activationCode: z.string().trim().min(1).max(80),
 });
 const staffLogin = z.strictObject({ username, password: z.string().min(1).max(128) });
+const staffSetup = z.strictObject({
+  username,
+  setupCode: z.string().trim().regex(/^[A-Za-z0-9_-]{24}$/),
+  password: z.string().length(6),
+});
 
 function cookieOptions() {
   return { httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', path: '/' };
@@ -65,6 +69,16 @@ export class AuthController {
   @bodyDocs(staffLogin)
   async staffLogin(@body(staffLogin) input: z.infer<typeof staffLogin>, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
     const session = await this.auth.staffSignIn(input, req.ip ?? 'unknown');
+    res.cookie(cookieName, session.token, { ...cookieOptions(), expires: session.expiresAt });
+    return session.principal;
+  }
+
+  @Public()
+  @Post('staff-setup')
+  @HttpCode(200)
+  @bodyDocs(staffSetup)
+  async staffSetup(@body(staffSetup) input: z.infer<typeof staffSetup>, @Req() req: Request, @Res({ passthrough: true }) res: Response) {
+    const session = await this.auth.setupServant(input, req.ip ?? 'unknown');
     res.cookie(cookieName, session.token, { ...cookieOptions(), expires: session.expiresAt });
     return session.principal;
   }

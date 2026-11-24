@@ -23,4 +23,5 @@ export const query = (schema: z.ZodType) => Query(new SchemaPipe(schema));
 export const name = z.string().trim().min(1).max(150);
 export const username = z.string().trim().toLowerCase().regex(/^[a-z0-9][a-z0-9._-]{2,63}$/);
 export const newPassword = z.string().min(12).max(128);
+export const pin = z.string().regex(/^[0-9]{6}$/);
 export const empty = z.strictObject({}).default({});

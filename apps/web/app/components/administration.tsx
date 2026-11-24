@@ -1,14 +1,16 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { api, json, errorText, type Grade, type Translate } from "../api";
+import { api, json, errorText, type Grade, type Language, type Translate } from "../api";
+import { displayDate } from "../competition";
 import { DeleteConfirmation } from "./delete-confirmation";
 
 type Servant = {id: string; fullName: string; username: string; status: "ACTIVE" | "SUSPENDED"; gradeIds: string[]};
 
 type Staff = Omit<Servant, "gradeIds"> & {role: "SUPER_ADMIN" | "SERVANT"};
+type SetupCode = {username: string; setupCode: string; expiresAt: string};
 
-export function Administration({ t, currentStaffId }: { t: Translate; currentStaffId: string }) {
+export function Administration({ t, language, currentStaffId }: { t: Translate; language: Language; currentStaffId: string }) {
   const [accounts, setAccounts] = useState<Staff[]>([]);
   const [deleting, setDeleting] = useState<Staff | null>(null);
   const [deleted, setDeleted] = useState(false);
@@ -19,6 +21,9 @@ export function Administration({ t, currentStaffId }: { t: Translate; currentSta
   const [error, setError] = useState<unknown>();
   const [notice, setNotice] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [code, setCode] = useState<SetupCode | null>(null);
+  const [confirmReset, setConfirmReset] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("");
   async function refresh() {
     const [gradeRows, staffRows, allStaff] = await Promise.all([api<Grade[]>("/admin/grades"), api<Servant[]>("/admin/servants"), api<Staff[]>("/admin/staff")]);
     setGrades(gradeRows);
@@ -36,19 +41,44 @@ export function Administration({ t, currentStaffId }: { t: Translate; currentSta
     const data = section === "grades" ? {name: values.get("name")} : {
       fullName: values.get("fullName"), username: values.get("username"),
       gradeIds: values.getAll("gradeIds"),
-      ...(values.get("password") ? {password: values.get("password")} : {}),
       ...(id ? {status: values.get("status")} : {})
     };
     setError(undefined);
     setNotice(false);
     setBusy(true);
     try {
-      await api("/admin/" + section + (id ? "/" + id : ""), json(id ? "PATCH" : "POST", data));
+      const result = await api<SetupCode | Servant | Grade>("/admin/" + section + (id ? "/" + id : ""), json(id ? "PATCH" : "POST", data));
+      if ("setupCode" in result) {
+        setCode(result);
+        setCopyStatus("");
+      }
       await refresh();
       form.reset();
       if (section === "grades") setGradeId(""); else setStaffId("");
       setNotice(true);
     } catch (err) {setError(err);} finally {setBusy(false);}
+  }
+
+  async function resetCredential() {
+    if (!servant) return;
+    setError(undefined);
+    setNotice(false);
+    setBusy(true);
+    try {
+      setCode(await api<SetupCode>(`/admin/servants/${servant.id}/reset-credential`, json("POST")));
+      setCopyStatus("");
+      setConfirmReset(false);
+    } catch (err) {setError(err);} finally {setBusy(false);}
+  }
+
+  async function copySetupCode() {
+    if (!code) return;
+    try {
+      await navigator.clipboard.writeText(code.setupCode);
+      setCopyStatus(t("Code copied.", "تم نسخ الرمز."));
+    } catch {
+      setCopyStatus(t("Select the code to copy it.", "حدّد الرمز لنسخه."));
+    }
   }
   return <section>
     <h1>{t("Staff and grades","الخدام والصفوف")}</h1>
@@ -61,15 +91,42 @@ export function Administration({ t, currentStaffId }: { t: Translate; currentSta
       <button disabled={busy} className="button primary">{t("Save grade","حفظ الصف")}</button>
     </form>
     <h2>{t("Servants","الخدام")}</h2>
-    <label>{t("Servant to manage","الخادم المطلوب تعديله")}<select value={staffId} onChange={e=>setStaffId(e.target.value)}><option value="">{t("New servant","خادم جديد")}</option>{staff.map(s=><option key={s.id} value={s.id}>{s.fullName} ({s.username})</option>)}</select></label>
+    <label>{t("Servant to manage","الخادم المطلوب تعديله")}
+      <select value={staffId} disabled={busy} onChange={event => {
+        setStaffId(event.target.value);
+        setConfirmReset(false);
+      }}>
+        <option value="">{t("New servant","خادم جديد")}</option>
+        {staff.map(s => <option key={s.id} value={s.id}>{s.fullName} ({s.username})</option>)}
+      </select>
+    </label>
     <form key={staffId} className="form-stack" onSubmit={e=>save(e,"servants")}>
       <label>{t("Full name","الاسم بالكامل")}<input name="fullName" required defaultValue={servant?.fullName}/></label>
       <label>{t("Username","اسم المستخدم")}<input name="username" required defaultValue={servant?.username} dir="ltr" autoComplete="off"/></label>
-      <label>{staffId ? t("New password (optional)","كلمة مرور جديدة (اختياري)") : t("Password","كلمة المرور")}<input type="password" name="password" minLength={12} required={!staffId} autoComplete="new-password" /></label>
       <fieldset><legend>{t("Assigned grades","الصفوف المسندة")}</legend>{grades.map(g=><label key={g.id} style={{display:"flex",alignItems:"center",gap:8}}><input style={{width:"auto"}} type="checkbox" name="gradeIds" value={g.id} defaultChecked={servant?.gradeIds.includes(g.id)}/>{g.name}</label>)}</fieldset>
       {servant && <label>{t("Account status","حالة الحساب")}<select name="status" defaultValue={servant.status}><option value="ACTIVE">{t("Active","نشط")}</option><option value="SUSPENDED">{t("Suspended","موقوف")}</option></select></label>}
-      <button disabled={busy} className="button primary">{t("Save servant","حفظ الخادم")}</button>
+      <button disabled={busy} className="button primary">{staffId ? t("Save servant","حفظ الخادم") : t("Create servant and generate code","إنشاء حساب الخادم وإصدار رمز")}</button>
     </form>
+    {servant?.status === "ACTIVE" && <div className="panel form-stack">
+      {confirmReset ? <>
+        <p>{t("Generate a new code? This invalidates the current PIN or password and signs the servant out.", "إصدار رمز جديد؟ سيؤدي ذلك إلى إلغاء الرمز أو كلمة المرور الحالية وتسجيل خروج الخادم.")}</p>
+        <div className="record-actions">
+          <button type="button" className="button primary" disabled={busy} onClick={resetCredential}>{t("Confirm and generate code", "تأكيد وإصدار الرمز")}</button>
+          <button type="button" className="button" disabled={busy} onClick={() => setConfirmReset(false)}>{t("Cancel", "إلغاء")}</button>
+        </div>
+      </> : <div><button type="button" className="button" disabled={busy} onClick={() => setConfirmReset(true)}>{t("Reset PIN or password", "إعادة ضبط الرمز أو كلمة المرور")}</button></div>}
+    </div>}
+    {code && <section className="panel form-stack" aria-labelledby="servant-setup-code-heading">
+      <h2 id="servant-setup-code-heading">{t("One-time setup code", "رمز إعداد لمرة واحدة")}</h2>
+      <p>{t("Send this code privately to", "أرسل هذا الرمز بشكل خاص إلى")} <bdi>{code.username}</bdi>. {t("Ask them to choose Set up or reset on the staff sign-in page.", "اطلب منه اختيار إعداد أو إعادة ضبط في صفحة دخول الخدام.")}</p>
+      <label>{t("Setup code", "رمز الإعداد")}<input dir="ltr" readOnly value={code.setupCode} onFocus={event => event.currentTarget.select()}/></label>
+      <p className="note">{t("Expires", "ينتهي في")} <bdi>{displayDate(code.expiresAt, language)}</bdi></p>
+      <div className="record-actions">
+        <button type="button" className="button primary" onClick={copySetupCode}>{t("Copy code", "نسخ الرمز")}</button>
+        <button type="button" className="button" onClick={() => setCode(null)}>{t("Done", "تم")}</button>
+        {copyStatus && <span role="status">{copyStatus}</span>}
+      </div>
+    </section>}
     <section className="panel form-stack" aria-labelledby="staff-accounts">
       <h2 id="staff-accounts">{t("Staff accounts", "حسابات الخدام والمديرين")}</h2>
       {deleted && <p className="notice success" role="status">{t("Staff account deleted.", "تم حذف الحساب.")}</p>}
@@ -91,6 +148,8 @@ export function Administration({ t, currentStaffId }: { t: Translate; currentSta
         setAccounts(rows => rows.filter(row => row.id !== deleting.id));
         setStaff(rows => rows.filter(row => row.id !== deleting.id));
         if (staffId === deleting.id) setStaffId("");
+        if (code?.username === deleting.username) setCode(null);
+        setConfirmReset(false);
         setDeleted(true);
 
       }}/>}

@@ -63,7 +63,9 @@ model AdminUser {
   id           String         @id @default(uuid()) @db.Uuid
   fullName     String
   username     String         @unique
-  passwordHash String
+  passwordHash String?
+  setupCodeHash String?
+  setupCodeExpiresAt DateTime? @db.Timestamptz(3)
   role         StaffRole      @default(SERVANT)
   status       StaffStatus    @default(ACTIVE)
   grades       ServantGrade[]

@@ -35,7 +35,7 @@ export function Staff({ principal, theme, setTheme, language }: {
       {section === "competitions" ? <StaffCompetitions admin={admin} language={language} t={t} />
         : section === "standings" ? <AdminOverallLeaderboard t={t}/>
         : admin && section === "appearance" ? <Appearance theme={theme} setTheme={setTheme} t={t} />
-        : admin && section === "administration" ? <Administration t={t} currentStaffId={principal.id} />
+        : admin && section === "administration" ? <Administration t={t} language={language} currentStaffId={principal.id} />
         : <Roster t={t} />}
     </div>
   </main>;

@@ -9,6 +9,7 @@ All browser calls use same-origin /api, JSON, credentials and private no-store r
 | POST /auth/activate | {gradeId,studentId,activationCode,pin} | principal |
 | POST /auth/login | {gradeId,studentId,pin} | principal |
 | POST /auth/staff-login | {username,password} | principal |
+| POST /auth/staff-setup | {username,setupCode,password} | principal |
 | GET /auth/me | — | principal or 401 |
 | POST /auth/logout | {} | 204 |
 | POST /admin/grades/:gradeId/activation-handout | {studentIds: string[]} | XLSX, Name and One-time password columns |
@@ -21,7 +22,7 @@ Attempt lifecycle, replacement uniqueness, frozen quiz sets, serialization of wr
 
 Staff roster endpoints require a staff principal. GET /admin/students?gradeId= returns an array of {id,gradeId,fullName,displayLabel,status}. POST /admin/students and PATCH /admin/students/:id accept {gradeId,fullName,displayLabel,status?} (patch partial). POST /admin/students/import accepts {gradeId,students:[{fullName,displayLabel}],dryRun:boolean}; parse CSV/XLSX locally and validate all rows server-side before atomic commit. Return {count}. POST /admin/students/:id/reset-pin {} revokes sessions and returns the student to pending so staff can issue a fresh handout. Servants manage students only in assigned grades and need both grades assigned to move a student. GET /admin/grades returns the same shape as /auth/grades restricted to staff grade scope.
 
-POST /admin/grades and PATCH /admin/grades/:id accept {name}. GET /admin/servants lists {id,fullName,username,status,gradeIds}. POST /admin/servants accepts {fullName,username,password,gradeIds}; PATCH /admin/servants/:id accepts partial updates and status. These management actions require SUPER_ADMIN.
+POST /admin/grades and PATCH /admin/grades/:id accept {name}. GET /admin/servants lists {id,fullName,username,status,gradeIds}. POST /admin/servants accepts {fullName,username,gradeIds} and returns the new account with {setupCode,expiresAt}. PATCH /admin/servants/:id edits account details, grade assignments and status. POST /admin/servants/:id/reset-credential {} returns {username,setupCode,expiresAt} for an active servant and invalidates their existing credential, sessions and previous code. These management actions require SUPER_ADMIN. Codes expire after 24 hours, are only returned upon issue, and are stored as digests. POST /auth/staff-setup consumes the code atomically and sets the chosen six-character credential before signing the servant in. Existing credentials remain usable until reset.
 
 ## Competitions and attempts
 
