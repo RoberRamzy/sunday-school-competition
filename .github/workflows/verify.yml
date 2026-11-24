@@ -2,7 +2,7 @@ name: Verify application
 on: [push, pull_request]
 jobs:
   integration:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       db:
         image: postgres:16-alpine
