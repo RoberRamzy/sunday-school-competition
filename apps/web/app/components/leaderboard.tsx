@@ -21,6 +21,7 @@ function boardName(board: Board, t: Translate) {
 }
 
 const gradeOrder = new Intl.Collator("en", { numeric: true });
+const rankDecorations = [undefined, "star", "bell", "ornament"] as const;
 
 function sortBoards(boards: Board[]) {
   return [...boards].sort((a, b) =>
@@ -28,7 +29,9 @@ function sortBoards(boards: Board[]) {
     gradeOrder.compare(a.name ?? "", b.name ?? ""));
 }
 
-function BoardView({ boards, t, cumulative = false }: { boards: Board[]; t: Translate; cumulative?: boolean }) {
+function BoardView({ boards, t, cumulative = false, reveal = false }: {
+  boards: Board[]; t: Translate; cumulative?: boolean; reveal?: boolean;
+}) {
   const [scope, setScope] = useState("");
   const orderedBoards = sortBoards(boards);
   const selected = orderedBoards.find(board => board.scope === scope) ?? orderedBoards[0];
@@ -39,8 +42,8 @@ function BoardView({ boards, t, cumulative = false }: { boards: Board[]; t: Tran
     </nav>}
     {!cumulative && <h3>{boardName(selected, t)}</h3>}
     {selected.rows.length === 0 ? <p className="note">{t("No completed attempts yet.", "لا توجد محاولات مكتملة بعد.")}</p>
-      : <div className="table-wrap" role="region" tabIndex={0} aria-label={boardName(selected, t)}>
-        <table className="roster-table data-table">
+      : <div key={selected.scope} className="table-wrap leaderboard-results" data-reveal={reveal} role="region" tabIndex={0} aria-label={boardName(selected, t)}>
+        <table className="roster-table data-table leaderboard-table">
           <thead><tr>
             <th scope="col">{t("Rank", "الترتيب")}</th>
             <th scope="col">{t("Full name", "الاسم الكامل")}</th>
@@ -48,13 +51,19 @@ function BoardView({ boards, t, cumulative = false }: { boards: Board[]; t: Tran
             {cumulative && <th scope="col">{t("Competitions", "المسابقات")}</th>}
             <th scope="col">{cumulative ? t("Total points", "مجموع النقاط") : t("Score", "النتيجة")}</th>
           </tr></thead>
-          <tbody>{selected.rows.map((row, index) => <tr key={index}>
-            <td>{row.rank}</td>
-            <td className="leaderboard-name"><bdi>{row.name}</bdi></td>
-            <td><bdi>{row.grade}</bdi></td>
-            {cumulative && <td>{row.competitions}</td>}
-            <td><bdi>{cumulative ? row.score : `${row.score} / ${row.maxScore}`}</bdi></td>
-          </tr>)}</tbody>
+          <tbody>{selected.rows.map((row, index) => {
+            const decoration = rankDecorations[row.rank];
+            return <tr key={index} data-podium={decoration ? row.rank : undefined}>
+              <td><span className="leaderboard-rank">
+                {decoration && <span className="leaderboard-rank-decoration"><Icon name={decoration} size={17}/></span>}
+                {row.rank}
+              </span></td>
+              <td className="leaderboard-name"><bdi>{row.name}</bdi></td>
+              <td><bdi>{row.grade}</bdi></td>
+              {cumulative && <td>{row.competitions}</td>}
+              <td className="leaderboard-score"><bdi>{cumulative ? row.score : `${row.score} / ${row.maxScore}`}</bdi></td>
+            </tr>;
+          })}</tbody>
         </table>
       </div>}
   </div>;
@@ -190,7 +199,7 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
         <h3>{t("Public preview", "المعاينة العامة")}</h3>
         <p className="note">{t("Published leaderboards show students’ full names to anyone with the link.", "تعرض لوحات الترتيب المنشورة أسماء الطلاب الكاملة لكل من لديه الرابط.")}</p>
         {dirty ? <p className="note">{t("Save your settings to review the public preview.", "احفظ الإعدادات لعرض المعاينة العامة.")}</p>
-          : <BoardView boards={view.publication.boards} t={t}/>}
+          : <BoardView boards={view.publication.boards} t={t} reveal/>}
       </section>
       <div className="record-actions">
         {view.published ? <>
@@ -240,7 +249,7 @@ export function PublicLeaderboard({ id, language, theme }: { id: string; languag
       </div>
       {boards ? <div className="panel form-stack">
         {cumulative && <p className="subtle">{overallExplanation(t)}</p>}
-        <BoardView boards={boards.boards} t={t} cumulative={cumulative}/>
+        <BoardView boards={boards.boards} t={t} cumulative={cumulative} reveal/>
       </div>
         : error ? <p role="alert">{error instanceof ApiError && [400, 404].includes(error.status) ? t("This leaderboard is unavailable.", "لوحة الترتيب غير متاحة.") : errorText(error, t)}</p>
           : <p role="status">{t("Loading standings…", "جارٍ تحميل الترتيب…")}</p>}

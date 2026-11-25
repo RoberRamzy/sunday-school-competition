@@ -408,6 +408,80 @@ form .notice { margin-block: .35rem; }
 .christmas-lights i:nth-child(3) { height: 10px; margin-bottom: -9px; }
 
 .leaderboard-name { overflow-wrap: anywhere; }
+.leaderboard-rank-decoration { display: none; }
+[data-theme="christmas"] .leaderboard-results { position: relative; }
+[data-theme="christmas"] .leaderboard-table :is(th, td) { position: relative; }
+[data-theme="christmas"] .leaderboard-table :is(th, td)::after {
+  content: "";
+  position: absolute;
+  inset-block-start: .3rem;
+  inset-inline-end: .35rem;
+  width: 3px;
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: var(--rank-glint, #b8945e);
+  opacity: .38;
+  pointer-events: none;
+}
+[data-theme="christmas"] .leaderboard-table [data-podium="1"] {
+  --rank-paper: #f9ebcc;
+  --rank-ornament: #68420c;
+  --rank-ornament-bg: #f6d88c;
+  --rank-glint: #91621f;
+}
+[data-theme="christmas"] .leaderboard-table [data-podium="2"] {
+  --rank-paper: #edf2ef;
+  --rank-ornament: #304d43;
+  --rank-ornament-bg: #dbe8e1;
+  --rank-glint: #597c6c;
+  --rank-delay: 70ms;
+}
+[data-theme="christmas"] .leaderboard-table [data-podium="3"] {
+  --rank-paper: #f7e7e6;
+  --rank-ornament: #73273a;
+  --rank-ornament-bg: #f3d1d4;
+  --rank-glint: #a04d62;
+  --rank-delay: 140ms;
+}
+[data-theme="christmas"] .leaderboard-table [data-podium] { background: var(--rank-paper); }
+[data-theme="christmas"] .leaderboard-table [data-podium] td::after { opacity: .65; }
+[data-theme="christmas"] .leaderboard-table [data-podium] .leaderboard-score { color: var(--rank-ornament); font-weight: 700; }
+[data-theme="christmas"] .leaderboard-rank { display: inline-flex; align-items: center; gap: .42rem; font-variant-numeric: tabular-nums; }
+[data-theme="christmas"] [data-podium] .leaderboard-rank { color: var(--rank-ornament); font-weight: 700; }
+[data-theme="christmas"] .leaderboard-rank-decoration {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border: 1px solid var(--rank-glint);
+  border-radius: 50%;
+  background: var(--rank-ornament-bg);
+}
+[data-theme="christmas"] [data-podium="2"] .leaderboard-rank-decoration { border-radius: 7px; }
+[data-theme="christmas"] [data-podium="3"] .leaderboard-rank-decoration { border-radius: 9px 9px 50% 50%; }
+@media (prefers-reduced-motion: no-preference) {
+  [data-theme="christmas"][data-snow-running="true"] .leaderboard-results[data-reveal="true"]::after {
+    content: "";
+    position: absolute;
+    inset: 0 0 auto;
+    height: 3px;
+    background: var(--candlelight);
+    pointer-events: none;
+    animation: leaderboard-light-reveal 520ms ease-out both;
+  }
+  [data-theme="christmas"][data-snow-running="true"] .leaderboard-results[data-reveal="true"] .leaderboard-rank-decoration {
+    animation: leaderboard-ornament-reveal 380ms var(--rank-delay, 0ms) cubic-bezier(.16, 1, .3, 1) both;
+  }
+}
+@keyframes leaderboard-light-reveal {
+  from { transform: scaleX(.08); opacity: 0; }
+  27% { opacity: 1; }
+  to { transform: scaleX(1); opacity: 0; }
+}
+@keyframes leaderboard-ornament-reveal {
+  from { transform: translateY(-4px) scale(.86); opacity: .52; }
+  to { transform: translateY(0) scale(1); opacity: 1; }
+}
 [data-theme="christmas"] .staff-board-heading { display: flex; align-items: center; gap: .55rem; }
 [data-theme="christmas"] .public-leaderboard { margin-block: clamp(1.25rem, 4vw, 2.6rem); }
 [data-theme="christmas"] .leaderboard-heading {
@@ -451,6 +525,10 @@ form .notice { margin-block: .35rem; }
   .leaderboard-back { max-width: 9rem; white-space: normal; text-align: center; line-height: 1.35; }
 }
 @media (max-width: 520px) {
+  [data-theme="christmas"] .public-leaderboard > .panel { padding-inline: .7rem; }
+  [data-theme="christmas"] .leaderboard-rank { gap: .28rem; }
+  [data-theme="christmas"] .leaderboard-rank-decoration { width: 23px; height: 23px; }
+  [data-theme="christmas"] .leaderboard-rank-decoration svg { width: 14px; height: 14px; }
   [data-theme="christmas"] .public-leaderboard .roster-table :is(th, td) {
     padding-inline: .45rem;
     white-space: normal;
