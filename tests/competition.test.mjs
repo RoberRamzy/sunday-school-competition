@@ -10,11 +10,25 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
   let fixtureCompetition;
   let overallPublished = false;
   try {
+    await success(await api(admin,'/admin/appearance','PUT',{theme:'christmas'}));
     const {student,grade,pin,activationCode} = await studentFixture(admin);
     fixtureStudentId = student.id;
     const fullName = 'Full name ' + student.displayLabel;
     await success(await api(admin, '/admin/students/' + student.id, 'PATCH', {fullName}));
     const alice = await context(engine,{viewport:{width:390,height:844}});
+    await alice.addInitScript(() => {
+      const BrowserAudio = window.Audio;
+      window.Audio = function (...args) {
+        const player = new BrowserAudio(...args);
+        const play = player.play.bind(player);
+        player.play = () => window.seasonalPlaybackAllowed ? play() : Promise.reject(new DOMException('Blocked','NotAllowedError'));
+        window.seasonalAudio = player;
+        return player;
+      };
+      document.addEventListener('pointerdown', event => {
+        if (event.target instanceof Element && event.target.closest('[data-needs-play="true"]')) window.seasonalPlaybackAllowed = true;
+      });
+    });
     await success(await api(alice,'/auth/activate','POST',{gradeId:grade.id,studentId:student.id,pin,activationCode}));
     await success(await api(alice,'/auth/logout','POST',{}));
     const create = async (route,data) => (await success(await api(admin,route,'POST',data))).json();
@@ -50,6 +64,15 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     await staffPage.getByRole('article').filter({hasText:title}).getByRole('button',{name:'Open competition'}).click();
     const studentLink = await staffPage.getByRole('link',{name:'Student competition link'}).getAttribute('href');
     const page = await alice.newPage();
+    const enableMusic = async () => {
+      await page.getByRole('button',{name:'Music Tap to play',exact:true}).click();
+      await page.waitForFunction(() => window.seasonalAudio && !window.seasonalAudio.paused && window.seasonalAudio.currentTime > 0);
+    };
+    const verifyQuietQuiz = async () => {
+      await page.waitForFunction(() => window.seasonalAudio.paused && document.querySelector('.christmas-scene')?.dataset.running === 'false');
+      assert.equal(await page.locator('.christmas-scene').getAttribute('data-animation'),'off');
+      assert.equal(await page.getByRole('button',{name:'Music',exact:true}).count(),0);
+    };
     await page.goto(studentLink);
     await page.getByRole('combobox').first().selectOption(grade.id);
     await page.getByRole('combobox').nth(1).selectOption(student.id);
@@ -59,6 +82,10 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     await page.getByRole('button',{name:'Confirm and start'}).waitFor();
     const unopened = await (await success(await api(alice,'/student/competitions/'+draft.id))).json();
     assert.equal(unopened.attemptId,null);
+    await enableMusic();
+    await page.getByRole('button',{name:'Confirm and start'}).click();
+    await page.getByRole('heading',{name:'Select blue.'}).waitFor();
+    await verifyQuietQuiz();
     const start = async()=> (await success(await api(alice,'/competitions/'+draft.id+'/start','POST',{}))).json();
     const [attempt,retry] = await Promise.all([start(),start()]);
     assert.equal(attempt.id,retry.id);
@@ -67,18 +94,6 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     assert.ok(!('correctOrder' in attempt.question));
 
     const path='/attempts/'+attempt.id;
-    const seasonalAssets = [];
-    page.on('request', request => {
-      if (/\/art\/(?:christmas-sleigh\.webp|jingle-bells\.mp3)$/.test(request.url())) {
-        seasonalAssets.push(request.url());
-      }
-    });
-    await page.reload();
-    await page.getByText(title,{exact:true}).waitFor();
-    await page.getByRole('button',{name:'Continue attempt'}).click();
-    await page.getByRole('heading',{name:'Select blue.'}).waitFor();
-    assert.equal(await page.locator('.christmas-scene').count(),0);
-    assert.deepEqual(seasonalAssets,[]);
     let release;
     const hold = new Promise(resolve => { release = resolve; });
     let intercepted;
@@ -91,7 +106,7 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     await page.getByRole('radio',{name:'Blue'}).check();
     await sent;
     try {
-      await success(await api(admin,'/admin/appearance','PUT',{theme:originalTheme.theme==='classic'?'christmas':'classic'}));
+      await success(await api(admin,'/admin/appearance','PUT',{theme:'classic'}));
     } finally {
       release();
     }
@@ -100,12 +115,22 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     const resumed=await (await success(await api(alice,'/student'+path))).json();
     assert.equal(resumed.expiresAt,attempt.expiresAt);
     assert.deepEqual(resumed.savedAnswer,[blue]);
+    await verifyQuietQuiz();
+    await success(await api(admin,'/admin/appearance','PUT',{theme:'christmas'}));
     await page.reload();
+    await enableMusic();
     await page.getByRole('button',{name:'Continue attempt'}).click();
+    await verifyQuietQuiz();
+    const pausedAt = await page.evaluate(() => {
+      window.pausedSeasonalAudio = window.seasonalAudio;
+      return window.seasonalAudio.currentTime;
+    });
     assert.ok(await page.getByRole('radio',{name:'Blue'}).isChecked());
     await page.getByRole('button',{name:'Submit attempt',exact:true}).click();
     await page.getByRole('button',{name:'Confirm submission'}).click();
     await page.getByRole('heading',{name:'Submitted',exact:true}).waitFor();
+    await page.waitForFunction(time => window.seasonalAudio === window.pausedSeasonalAudio &&
+      !window.seasonalAudio.paused && window.seasonalAudio.currentTime > time, pausedAt);
     const before=await (await success(await api(alice,'/student/competitions/'+draft.id))).json();
     assert.equal(before.result,null);
     await create(competition+'/close',{});

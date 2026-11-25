@@ -1,11 +1,13 @@
 "use client";
 
-import { useCallback, useEffect, useId, useRef, useState, type CSSProperties } from "react";
-import type { Translate } from "../api";
+import { usePathname } from "next/navigation";
+import { createContext, useCallback, useContext, useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import type { Theme, Translate } from "../api";
 import { Icon } from "./ui-icon";
 
 const preferenceKey = "sunday-school-christmas-effects";
 const defaults = { animation: true, music: true };
+const tracks = ["/art/jingle-bells.mp3", "/art/deck-the-halls.mp3", "/art/we-wish-you-a-merry-christmas.mp3"];
 type MusicStatus = "idle" | "loading" | "playing" | "blocked" | "unavailable";
 
 function readPreferences() {
@@ -17,14 +19,16 @@ function readPreferences() {
   }
 }
 
-export function useChristmasEffects(active: boolean) {
+function useSeasonalController(active: boolean, quizInProgress: boolean) {
   const [preferences, setPreferences] = useState(defaults);
   const [ready, setReady] = useState(false);
   const [reduced, setReduced] = useState(false);
   const [visible, setVisible] = useState(false);
   const [musicStatus, setMusicStatus] = useState<MusicStatus>("idle");
+  const [track, setTrack] = useState(0);
   const audio = useRef<HTMLAudioElement | null>(null);
   const attempt = useRef(0);
+  const available = active && !quizInProgress;
 
   const pauseMusic = useCallback(() => {
     attempt.current++;
@@ -32,15 +36,15 @@ export function useChristmasEffects(active: boolean) {
   }, []);
 
   const playMusic = useCallback(() => {
-    if (document.hidden) return;
+    if (!available || document.hidden) return;
     if (!audio.current) {
       const player = new Audio();
-      player.loop = true;
       player.preload = "none";
-      player.volume = .25;
-      player.src = "/art/jingle-bells.mp3";
+      player.volume = .3;
+      player.onended = () => setTrack(index => (index + 1) % tracks.length);
       audio.current = player;
     }
+    if (audio.current.getAttribute("src") !== tracks[track]) audio.current.src = tracks[track];
     if (!audio.current.paused) return;
     if (audio.current.error) audio.current.load();
     const id = ++attempt.current;
@@ -50,10 +54,9 @@ export function useChristmasEffects(active: boolean) {
     }).catch(error => {
       if (attempt.current === id) setMusicStatus(error?.name === "NotAllowedError" ? "blocked" : "unavailable");
     });
-  }, []);
+  }, [available, track]);
 
   useEffect(() => {
-    if (!active) return;
     const media = window.matchMedia("(prefers-reduced-motion: reduce)");
     const updateMotion = () => setReduced(media.matches);
     const updateVisibility = () => {
@@ -76,17 +79,18 @@ export function useChristmasEffects(active: boolean) {
       window.removeEventListener("storage", updatePreferences);
       pauseMusic();
       if (audio.current) {
+        audio.current.onended = null;
         audio.current.removeAttribute("src");
         audio.current.load();
         audio.current = null;
       }
     };
-  }, [active, pauseMusic]);
+  }, [pauseMusic]);
 
-  useEffect(() => {
-    if (active && ready && visible && preferences.music) playMusic();
+  useLayoutEffect(() => {
+    if (available && ready && visible && preferences.music) playMusic();
     else if (audio.current) pauseMusic();
-  }, [active, ready, visible, preferences.music, playMusic, pauseMusic]);
+  }, [available, ready, visible, preferences.music, playMusic, pauseMusic]);
 
   function save(next: typeof defaults) {
     setPreferences(next);
@@ -100,7 +104,8 @@ export function useChristmasEffects(active: boolean) {
 
   const needsPlay = musicStatus === "blocked" || musicStatus === "unavailable";
   return {
-    ready: active && ready, reduced, visible, animate: active && ready && preferences.animation && !reduced,
+    ready: available && ready, reduced, visible, animate: active && ready && preferences.animation && !reduced,
+    running: available && ready && visible && preferences.animation && !reduced,
     music: preferences.music, musicStatus, needsPlay,
     toggleAnimation: () => save({ ...preferences, animation: !preferences.animation }),
     toggleMusic: () => {
@@ -110,15 +115,57 @@ export function useChristmasEffects(active: boolean) {
         playMusic();
       }
     },
-    stopMusic,
   };
 }
 
-type Effects = ReturnType<typeof useChristmasEffects>;
+type Effects = ReturnType<typeof useSeasonalController>;
+type Surface = { path: string; theme: Theme };
+const ChristmasContext = createContext<{
+  effects: Effects;
+  quizInProgress: boolean;
+  setQuizInProgress: (active: boolean) => void;
+  setSurface: (surface: Surface) => void;
+} | null>(null);
 
-export function ChristmasControls({ effects, t }: { effects: Effects; t: Translate }) {
+export function ChristmasProvider({ children }: { children: ReactNode }) {
+  const path = usePathname();
+  const [surface, setSurface] = useState<Surface | null>(null);
+  const [quizInProgress, setQuizInProgress] = useState(false);
+  const active = surface?.path === path && surface.theme === "christmas";
+  const effects = useSeasonalController(active, quizInProgress);
+  return <ChristmasContext.Provider value={{ effects, quizInProgress, setQuizInProgress, setSurface }}>
+    {children}
+    {surface?.theme === "christmas" && <ChristmasScene effects={effects} quizInProgress={quizInProgress}/>}
+  </ChristmasContext.Provider>;
+}
+
+function useChristmas() {
+  const context = useContext(ChristmasContext);
+  if (!context) throw new Error("ChristmasProvider is required");
+  return context;
+}
+
+export function useChristmasSurface(theme: Theme) {
+  const path = usePathname();
+  const { effects, quizInProgress, setSurface } = useChristmas();
+  useLayoutEffect(() => {
+    setSurface({ path, theme });
+  }, [path, theme, setSurface]);
+  return { snowRunning: theme === "christmas" && effects.running, quizInProgress };
+}
+
+export function useQuietQuiz(active: boolean) {
+  const { setQuizInProgress } = useChristmas();
+  useLayoutEffect(() => {
+    if (!active) return;
+    setQuizInProgress(true);
+    return () => setQuizInProgress(false);
+  }, [active, setQuizInProgress]);
+}
+
+export function ChristmasControls({ t }: { t: Translate }) {
+  const { effects } = useChristmas();
   const motionHint = useId();
-  const musicButton = useRef<HTMLButtonElement>(null);
   const on = t("On", "تشغيل");
   const off = t("Off", "إيقاف");
   const musicStatus = !effects.music ? off
@@ -136,51 +183,29 @@ export function ChristmasControls({ effects, t }: { effects: Effects; t: Transla
       <span aria-hidden="true">{effects.animate ? on : off}</span>
     </button>
     {effects.reduced && <span id={motionHint} className="christmas-control-note">{t("Reduced motion is on.", "تقليل الحركة مفعّل.")}</span>}
-    <button ref={musicButton} type="button" className="christmas-control" data-needs-play={musicNeedsPlay}
+    <button type="button" className="christmas-control" data-needs-play={musicNeedsPlay}
       aria-label={musicNeedsPlay ? `${music} ${musicStatus}` : music} aria-pressed={effects.music && !effects.needsPlay}
       disabled={!effects.ready} onClick={effects.toggleMusic}>
       <strong className="christmas-music-label">{music}</strong>
       {musicNeedsPlay && <span className="christmas-music-icon"><Icon name="music" size={15}/></span>}
       <span aria-hidden="true">{musicStatus}</span>
     </button>
-    {musicNeedsPlay && <button type="button" className="christmas-mute" aria-label={t("Keep music off", "أبقِ الموسيقى متوقفة")} onClick={() => {
-      musicButton.current?.focus();
-      effects.stopMusic();
-    }}>
-      {t("Keep off", "إيقاف")}
-    </button>}
   </div>;
 }
 
 // Evenly spread both depths across the scene, including when only the first half is shown.
-const flakePositions = [8, 33, 60, 86, 19, 48, 74, 96, 4, 26, 53, 81, 13, 40, 66, 92];
+const flakePositions = [8, 33, 60, 86, 19, 48, 74, 96, 4, 26, 53, 81, 13, 40, 66, 92, 16, 29, 44, 56, 63, 70, 78, 89];
 
-export function ChristmasScene({ effects, variant }: { effects: Effects; variant: "welcome" | "leaderboard" }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [inView, setInView] = useState(false);
-  useEffect(() => {
-    if (!ref.current || !effects.animate) return;
-    if (!("IntersectionObserver" in window)) {
-      setInView(true);
-      return;
-    }
-    const observer = new IntersectionObserver(([entry]) => setInView(entry.isIntersecting));
-    observer.observe(ref.current);
-    return () => observer.disconnect();
-  }, [effects.animate]);
-
-  return <div ref={ref} className="christmas-scene" data-scene={variant}
-    data-animation={effects.animate ? "on" : "off"}
-    data-running={effects.animate && effects.visible && inView} aria-hidden="true">
-    {effects.animate && flakePositions.slice(0, variant === "welcome" ? 16 : 8).map((position, index) =>
+function ChristmasScene({ effects, quizInProgress }: { effects: Effects; quizInProgress: boolean }) {
+  return <div className="christmas-scene" data-animation={effects.animate && !quizInProgress ? "on" : "off"}
+    data-running={effects.running} aria-hidden="true">
+    {flakePositions.map((position, index) =>
       <i key={position} className="christmas-flake" style={{
         "--flake-x": `${position}%`,
         "--flake-time": `${index % 2 ? 14 + index % 3 : 9 + index % 4}s`,
         "--flake-delay": `-${(index * 7 % 17) * .53}s`,
         "--flake-drift": `${index % 2 ? 14 : -11}px`,
       } as CSSProperties}/>)}
-    {variant === "welcome" && <div className="christmas-sky"><div className="christmas-sleigh"/></div>}
-    <div className="christmas-drift"/>
-    {effects.animate && <div className="christmas-drift christmas-drift-filling"/>}
+    <div className="christmas-sky"><div className="christmas-sleigh"/></div>
   </div>;
 }

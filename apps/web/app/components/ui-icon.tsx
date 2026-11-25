@@ -17,6 +17,7 @@ const paths = {
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 11h18"/></>,
   clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
   music: <><path d="M10 17V5l9-2v12M10 8l9-2"/><ellipse cx="7" cy="17" rx="3" ry="2"/><ellipse cx="16" cy="15" rx="3" ry="2"/></>,
+  evergreen: <><path d="M3 19c6-2 11-6 17-15M8 17 4 12m8 2-3-6m7 3-2-6m-4 11 7 2m-4-5 7 1m-3-5 5-1"/><circle cx="7" cy="20" r="1" fill="#8a283d" stroke="none"/><circle cx="10" cy="20" r="1" fill="#8a283d" stroke="none"/></>,
   up: <path d="m6 15 6-6 6 6"/>,
 };
 

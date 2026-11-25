@@ -472,22 +472,27 @@ form .notice { margin-block: .35rem; }
 .christmas-short-label, .christmas-music-icon { display: none; }
 .christmas-control span { color: #ded9c9; font-weight: 500; }
 .christmas-control[aria-pressed="true"] span { color: var(--candlelight); }
-.christmas-control-note, .christmas-mute { font-size: .78rem; color: var(--candlelight); }
-.christmas-mute { min-height: 44px; padding-inline: .4rem; text-decoration: underline; }
+.christmas-control-note { font-size: .78rem; color: var(--candlelight); }
 
-:is(.welcome-art, .leaderboard-art):has(> .christmas-scene) { position: relative; }
+.site[data-theme="christmas"] {
+  --season-snow: #fffdfa;
+}
+.site[data-theme="christmas"] > :is(header, main, footer, .site-notice) {
+  position: relative;
+  z-index: 2;
+}
+.site[data-theme="christmas"] > .skip-link { z-index: 3; }
 .christmas-scene {
-  --snow: #e6f2f7;
-  position: absolute;
+  position: fixed;
   inset: 0;
+  z-index: 1;
   overflow: hidden;
-  border-radius: inherit;
-  container-type: inline-size;
   pointer-events: none;
 }
+.christmas-scene[data-animation="off"] { visibility: hidden; }
 .christmas-flake {
-  --flake-size: 3px;
-  --flake-opacity: .62;
+  --flake-size: 4px;
+  --flake-opacity: .86;
   position: absolute;
   top: 0;
   left: var(--flake-x);
@@ -495,15 +500,15 @@ form .notice { margin-block: .35rem; }
   width: var(--flake-size);
   animation: christmas-snowfall var(--flake-time) var(--flake-delay) linear infinite;
 }
-.christmas-flake:nth-child(2n) { --flake-size: 2px; --flake-opacity: .45; }
-.christmas-flake:nth-child(5n + 1) { --flake-size: 4px; }
+.christmas-flake:nth-child(2n) { --flake-size: 3px; --flake-opacity: .65; }
+.christmas-flake:nth-child(5n + 1) { --flake-size: 6px; }
 .christmas-flake::before {
   content: "";
   display: block;
   height: var(--flake-size);
   border-radius: 50%;
-  background: var(--snow);
-  box-shadow: 0 1px 2px #182b3b55;
+  background: #fffdfa;
+  box-shadow: 0 1px 2px #182b3b59;
 }
 @keyframes christmas-snowfall {
   from { transform: translate3d(0, -5%, 0); opacity: 0; }
@@ -511,80 +516,86 @@ form .notice { margin-block: .35rem; }
   to { transform: translate3d(var(--flake-drift), 102%, 0); opacity: 0; }
 }
 
-.christmas-drift {
-  position: absolute;
-  inset: auto -2% -1px;
-  height: clamp(3px, 1.5cqw, 9px);
-  background: var(--snow);
-  opacity: .8;
-  border-radius: 49% 51% 0 0 / 65% 85% 0 0;
-}
-.christmas-drift-filling {
-  height: clamp(7px, 3.2cqw, 21px);
-  opacity: .9;
-  transform-origin: bottom;
-  animation: christmas-snowbank 45s ease-out both;
-}
-[data-scene="leaderboard"] .christmas-drift { max-height: 5px; }
-[data-scene="leaderboard"] .christmas-drift-filling { max-height: 9px; }
-[data-scene="welcome"] .christmas-drift {
-  inset: auto auto 17.7% 13%;
-  width: 31%;
-  height: clamp(2px, .6cqw, 5px);
-  border-radius: 43% 53% 18% 12% / 36% 58% 24% 44%;
-}
-[data-scene="welcome"] .christmas-drift-filling {
-  height: clamp(4px, 1.7cqw, 12px);
-  background:
-    radial-gradient(ellipse at 28% 100%, var(--snow) 69%, transparent 71%) no-repeat 4% 100% / 61% 100%,
-    radial-gradient(ellipse at 65% 100%, var(--snow) 69%, transparent 71%) no-repeat 100% 100% / 68% 70%;
-}
-@keyframes christmas-snowbank {
-  from { transform: scaleY(.12); }
-  to { transform: scaleY(1); }
-}
-
 .christmas-sky {
   position: absolute;
-  top: 22%;
-  left: 16%;
-  width: 22%;
-  height: 19%;
+  inset: 8.15rem 0 auto;
+  height: 2.8rem;
   overflow: hidden;
-  mask-image: linear-gradient(90deg, transparent, #000 17% 83%, transparent);
 }
 .christmas-sleigh {
   position: absolute;
-  inset: 4% 0 0;
-  animation: christmas-sleigh-pass 5s 2s linear both;
+  inset: 0 0 auto;
+  animation: christmas-sleigh-pass 60s 2s linear infinite;
 }
 .christmas-sleigh::before {
   content: "";
   display: block;
-  width: clamp(42px, 11cqw, 78px);
+  width: clamp(5rem, 11vw, 7.8rem);
   aspect-ratio: 360 / 123;
   background: center / contain no-repeat;
-  filter: brightness(1.3);
 }
-[data-animation="on"] .christmas-sleigh::before { background-image: url("/art/christmas-sleigh.webp"); }
+.christmas-scene[data-animation="on"] .christmas-sleigh::before { background-image: url("/art/christmas-sleigh.webp"); }
 @keyframes christmas-sleigh-pass {
-  from { transform: translate3d(-42%, 28%, 0); opacity: 0; }
-  18%, 80% { opacity: .9; }
-  to { transform: translate3d(104%, -15%, 0); opacity: 0; }
+  0% { transform: translate3d(-22%, 5%, 0); opacity: 0; }
+  1.9% { opacity: .63; }
+  7% { opacity: .63; }
+  8.333%, 100% { transform: translate3d(105%, -4%, 0); opacity: 0; }
 }
-.christmas-scene[data-running="false"] :is(.christmas-flake, .christmas-sleigh, .christmas-drift-filling) {
+
+.student-season-decoration { display: none; }
+[data-theme="christmas"] .student-season-decoration {
+  display: inline-flex;
+  align-items: center;
+  gap: .35rem;
+  color: #315c48;
+  flex: none;
+}
+[data-theme="christmas"] .student-season-decoration > svg { flex: none; }
+
+[data-theme="christmas"] :where(.competition-card, .competition-card .button, .student-competitions .student-detail .button, .entry-submit) {
+  position: relative;
+}
+[data-theme="christmas"] :where(.competition-card, .competition-card .button, .student-competitions .student-detail .button, .entry-submit)::after {
+  content: "";
+  position: absolute;
+  inset-block-start: -3px;
+  inset-inline-start: 12px;
+  width: min(38%, 3.4rem);
+  height: 6px;
+  border-radius: 60% 48% 40% 25% / 60% 86% 32% 53%;
+  background: var(--season-snow);
+  box-shadow: 0 1px 1px #244a3945;
+  pointer-events: none;
+  transform-origin: bottom;
+  animation: christmas-snowbank 45s ease-out both;
+}
+[data-theme="christmas"] .competition-card::after {
+  width: min(37%, 9rem);
+  height: 8px;
+  inset-inline-start: 1rem;
+}
+@keyframes christmas-snowbank {
+  from { transform: scaleY(.25); }
+  to { transform: scaleY(1); }
+}
+.christmas-scene[data-running="false"] :is(.christmas-flake, .christmas-sleigh),
+[data-theme="christmas"][data-snow-running="false"] :where(.competition-card, .competition-card .button, .student-competitions .student-detail .button, .entry-submit)::after {
   animation-play-state: paused;
 }
-.christmas-scene[data-animation="off"] .christmas-sleigh { visibility: hidden; }
 @media (max-width: 760px) {
   .christmas-controls { justify-content: center; }
   .christmas-control-note { order: 1; flex-basis: 100%; text-align: center; }
-  .christmas-sky { left: 18%; width: 20%; top: 24%; }
-  [data-scene="welcome"] .christmas-drift { inset: auto auto 8.5% 18%; width: 33%; }
-  .christmas-flake:nth-child(n + 9),
-  [data-scene="leaderboard"] .christmas-flake:nth-child(n + 5) { display: none; }
+  .christmas-flake:nth-child(n + 13) { display: none; }
+  [data-theme="christmas"] .student-season-decoration > svg { width: 26px; height: 26px; }
+  [data-theme="christmas"] .student-season-decoration .season-lights { width: min(20vw, 92px); }
 }
 @media (max-width: 430px) {
+  [data-theme="christmas"] .header-inner .logout svg { display: none; }
+  [data-theme="christmas"] .student-heading h1 {
+    min-width: 0;
+    font-size: clamp(1.7rem, 7.5vw, 2.2rem);
+    overflow-wrap: anywhere;
+  }
   .christmas-full-label { display: none; }
   .christmas-short-label { display: inline; }
   .christmas-control { padding-inline: .55rem; }
@@ -592,7 +603,11 @@ form .notice { margin-block: .35rem; }
   .christmas-control[data-needs-play="true"] .christmas-music-icon { display: inline-flex; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .christmas-scene :is(.christmas-flake, .christmas-sky, .christmas-drift-filling) { display: none; }
+  .christmas-scene { display: none; }
+  [data-theme="christmas"] :where(.competition-card, .competition-card .button, .student-competitions .student-detail .button, .entry-submit)::after {
+    animation: none;
+    transform: scaleY(.35);
+  }
 }
 
 .record-actions .button[aria-pressed="true"] {

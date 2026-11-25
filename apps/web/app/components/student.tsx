@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ApiError, api, errorText, json, type Grade, type Language, type Principal, type Translate } from "../api";
 import { displayDate, statusText, type Attempt, type StudentCompetition } from "../competition";
 import { Icon } from "./ui-icon";
+import { useQuietQuiz } from "./christmas-effects";
 
 type SaveOperation = { questionId: string; itemIds: string[]; advance: boolean; revision: number };
 
@@ -81,10 +82,13 @@ export function Student({ principal, language, t, competitionId }: {
     else { setAttempt(null); void refresh(); }
   }}/>;
 
-  return <main id="main-content" className="student-shell">
+  return <main id="main-content" className="student-shell student-competitions">
     <div className="student-heading">
       <h1>{t("My competitions", "مسابقاتي")}</h1>
-      <span className="season-lights" aria-hidden="true"><i/><i/><i/><i/><i/><i/><i/></span>
+      <span className="student-season-decoration" aria-hidden="true">
+        <Icon name="evergreen" size={35}/>
+        <span className="season-lights"><i/><i/><i/><i/><i/><i/><i/></span>
+      </span>
     </div>
     <p className="subtle">{t("Welcome,", "مرحبًا،")} <bdi>{principal.displayName}</bdi>{grade && <> · <bdi>{grade}</bdi></>}</p>
     {!competitionId && overallPublic && <Link className="link-button" href="/leaderboards/all" prefetch={false}>{t("Across-competition leaderboard", "لوحة ترتيب جميع المسابقات")}</Link>}
@@ -161,6 +165,7 @@ function Quiz({ firstState, t, language, onExit }: {
   const heading = useRef<HTMLHeadingElement>(null);
   const dragged = useRef<string | null>(null);
   const question = attempt.question;
+  useQuietQuiz(attempt.status === "IN_PROGRESS");
 
   const adopt = useCallback((next: Attempt) => {
     setAttempt(next);
