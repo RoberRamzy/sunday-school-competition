@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
 import { ApiError, api, errorText, json, type Language, type Theme, type Translate } from "../api";
 import { ChristmasLights, SiteBrand } from "./site-brand";
+import { ChristmasControls, ChristmasScene, useChristmasEffects } from "./christmas-effects";
 import { Icon } from "./ui-icon";
 
 type Row = { rank: number; name: string; grade: string; score: number; maxScore: number; competitions?: number };
@@ -215,6 +216,8 @@ export function PublicLeaderboard({ id, language, theme }: { id: string; languag
     return () => controller.abort();
   }, [id]);
   const christmas = theme === "christmas";
+  const festiveLeaderboard = christmas && Boolean(boards);
+  const effects = useChristmasEffects(festiveLeaderboard);
   const back = <Link href="/" className={christmas ? "utility leaderboard-back" : "link-button"}>
     {t("Back to the competition site", "العودة إلى موقع المسابقة")}
   </Link>;
@@ -227,13 +230,16 @@ export function PublicLeaderboard({ id, language, theme }: { id: string; languag
           <ChristmasLights/>
           <nav aria-label={t("Site", "الموقع")}>{back}</nav>
         </div>
+        {!error && <ChristmasControls effects={effects} t={t}/>}
       </header>
     </>}
     <main id="main-content" className="student-shell form-stack public-leaderboard">
       {!christmas && <div>{back}</div>}
       <div className="leaderboard-heading">
         <h1 dir="auto">{cumulative ? overallTitle(t) : boards?.title ?? t("Leaderboard", "لوحة الترتيب")}</h1>
-        {christmas && <div className="leaderboard-art" aria-hidden="true"/>}
+        {christmas && <div className="leaderboard-art" aria-hidden="true">
+          {festiveLeaderboard && <ChristmasScene effects={effects} variant="leaderboard"/>}
+        </div>}
       </div>
       {boards ? <div className="panel form-stack">
         {cumulative && <p className="subtle">{overallExplanation(t)}</p>}

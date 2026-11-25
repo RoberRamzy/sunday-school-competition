@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { api, errorText, json, type Grade, type Principal, type Theme, type Translate } from "../api";
 import { Icon } from "./ui-icon";
 
@@ -12,8 +12,8 @@ function normalizeDigits(value: string) {
   return value.replace(/[٠-٩۰-۹]/g, digit => String(digit.charCodeAt(0) - (digit >= "۰" ? 0x06f0 : 0x0660)));
 }
 
-export function SignIn({ staff, theme, t, onSignIn }: {
-  staff: boolean; theme: Theme; t: Translate; onSignIn: (principal: Principal) => void;
+export function SignIn({ staff, theme, t, onSignIn, welcomeEffects }: {
+  staff: boolean; theme: Theme; t: Translate; onSignIn: (principal: Principal) => void; welcomeEffects?: ReactNode;
 }) {
   const [mode, setMode] = useState<Mode>("login");
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -101,7 +101,7 @@ export function SignIn({ staff, theme, t, onSignIn }: {
           ? t("Celebrate the Nativity with your Sunday School community.", "احتفل بعيد الميلاد مع أسرة مدارس الأحد.")
           : t("Join your Sunday School community for this year’s competition.", "شارك أسرة مدارس الأحد في مسابقة هذا العام.")}</p>
       </div>
-      <div className="welcome-art" aria-hidden="true" />
+      <div className="welcome-art" aria-hidden="true">{welcomeEffects}</div>
     </section>
 
     <section className="entry-card" aria-labelledby="entry-heading">

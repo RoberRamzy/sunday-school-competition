@@ -16,6 +16,7 @@ const paths = {
   plus: <path d="M12 5v14M5 12h14"/>,
   calendar: <><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4m10-4v4M3 11h18"/></>,
   clock: <><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></>,
+  music: <><path d="M10 17V5l9-2v12M10 8l9-2"/><ellipse cx="7" cy="17" rx="3" ry="2"/><ellipse cx="16" cy="15" rx="3" ry="2"/></>,
   up: <path d="m6 15 6-6 6 6"/>,
 };
 

@@ -67,10 +67,18 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     assert.ok(!('correctOrder' in attempt.question));
 
     const path='/attempts/'+attempt.id;
+    const seasonalAssets = [];
+    page.on('request', request => {
+      if (/\/art\/(?:christmas-sleigh\.webp|jingle-bells\.mp3)$/.test(request.url())) {
+        seasonalAssets.push(request.url());
+      }
+    });
     await page.reload();
     await page.getByText(title,{exact:true}).waitFor();
     await page.getByRole('button',{name:'Continue attempt'}).click();
     await page.getByRole('heading',{name:'Select blue.'}).waitFor();
+    assert.equal(await page.locator('.christmas-scene').count(),0);
+    assert.deepEqual(seasonalAssets,[]);
     let release;
     const hold = new Promise(resolve => { release = resolve; });
     let intercepted;

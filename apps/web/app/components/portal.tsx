@@ -8,6 +8,7 @@ import { SignIn } from "./sign-in";
 import { Staff } from "./staff";
 import { Student } from "./student";
 import { ChristmasLights, SiteBrand } from "./site-brand";
+import { ChristmasControls, ChristmasScene, useChristmasEffects } from "./christmas-effects";
 
 export function Portal({ staffEntry = false, competitionId, initialLanguage, initialTheme, initialPrincipal }: {
   staffEntry?: boolean; competitionId?: string; initialLanguage: Language; initialTheme: Theme; initialPrincipal: Principal | null;
@@ -17,6 +18,8 @@ export function Portal({ staffEntry = false, competitionId, initialLanguage, ini
   const [theme, setTheme] = useState(initialTheme);
   const [error, setError] = useState<unknown>(null);
   const [loggingOut, setLoggingOut] = useState(false);
+  const festiveWelcome = theme === "christmas" && !staffEntry && !competitionId && !principal;
+  const christmas = useChristmasEffects(festiveWelcome);
 
   const t: Translate = (en, ar) => language === "ar" ? ar : en;
   useEffect(() => {
@@ -77,9 +80,12 @@ export function Portal({ staffEntry = false, competitionId, initialLanguage, ini
           </button> : !staffEntry && <Link className="utility staff-link" href="/staff" prefetch={false}>{t("Staff sign in", "دخول الخدام")}</Link>}
         </nav>
       </div>
+      {festiveWelcome && <ChristmasControls effects={christmas} t={t}/>}
     </header>
     {error ? <p className="site-notice notice error" role="alert">{errorText(error, t)}</p> : null}
-    {!principal ? <SignIn staff={staffEntry} t={t} theme={theme} onSignIn={(next) => { setError(null); setPrincipal(next); }} />
+    {!principal ? <SignIn staff={staffEntry} t={t} theme={theme}
+      welcomeEffects={festiveWelcome ? <ChristmasScene effects={christmas} variant="welcome"/> : undefined}
+      onSignIn={(next) => { setError(null); setPrincipal(next); }} />
       : principal.role === "STUDENT" ? <Student principal={principal} language={language} t={t} competitionId={competitionId}/>
       : competitionId ? <main id="main-content" className="student-shell form-stack">
         <h1>{t("Student competition link", "رابط المسابقة للطلاب")}</h1>
