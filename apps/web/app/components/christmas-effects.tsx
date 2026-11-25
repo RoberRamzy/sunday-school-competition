@@ -92,6 +92,30 @@ function useSeasonalController(active: boolean, quizInProgress: boolean) {
     else if (audio.current) pauseMusic();
   }, [available, ready, visible, preferences.music, playMusic, pauseMusic]);
 
+  useEffect(() => {
+    if (!available || !visible || !preferences.music || musicStatus !== "blocked") return;
+
+    const retryOnInteraction = (event: MouseEvent | KeyboardEvent) => {
+      if (!event.isTrusted || navigator.userActivation?.isActive === false) return;
+      // The music button handles its own click, including keyboard activation.
+      if (event.target instanceof Element && event.target.closest("[data-music-toggle]")) return;
+      playMusic();
+    };
+    const retryOnPointer = (event: PointerEvent) => {
+      if ((event.pointerType === "mouse") === (event.type === "pointerdown")) retryOnInteraction(event);
+    };
+    document.addEventListener("pointerdown", retryOnPointer, true);
+    document.addEventListener("pointerup", retryOnPointer, true);
+    document.addEventListener("click", retryOnInteraction, true);
+    document.addEventListener("keydown", retryOnInteraction, true);
+    return () => {
+      document.removeEventListener("pointerdown", retryOnPointer, true);
+      document.removeEventListener("pointerup", retryOnPointer, true);
+      document.removeEventListener("click", retryOnInteraction, true);
+      document.removeEventListener("keydown", retryOnInteraction, true);
+    };
+  }, [available, visible, preferences.music, musicStatus, playMusic]);
+
   function save(next: typeof defaults) {
     setPreferences(next);
     try { localStorage.setItem(preferenceKey, JSON.stringify(next)); } catch {}
@@ -183,7 +207,7 @@ export function ChristmasControls({ t }: { t: Translate }) {
       <span aria-hidden="true">{effects.animate ? on : off}</span>
     </button>
     {effects.reduced && <span id={motionHint} className="christmas-control-note">{t("Reduced motion is on.", "تقليل الحركة مفعّل.")}</span>}
-    <button type="button" className="christmas-control" data-needs-play={musicNeedsPlay}
+    <button type="button" className="christmas-control" data-music-toggle="" data-needs-play={musicNeedsPlay}
       aria-label={musicNeedsPlay ? `${music} ${musicStatus}` : music} aria-pressed={effects.music && !effects.needsPlay}
       disabled={!effects.ready} onClick={effects.toggleMusic}>
       <strong className="christmas-music-label">{music}</strong>
@@ -196,16 +220,31 @@ export function ChristmasControls({ t }: { t: Translate }) {
 // Evenly spread both depths across the scene, including when only the first half is shown.
 const flakePositions = [8, 33, 60, 86, 19, 48, 74, 96, 4, 26, 53, 81, 13, 40, 66, 92, 16, 29, 44, 56, 63, 70, 78, 89];
 
+function randomBetween(min: number, max: number) {
+  return min + Math.random() * (max - min);
+}
+
 function ChristmasScene({ effects, quizInProgress }: { effects: Effects; quizInProgress: boolean }) {
+  const [snow] = useState(() => ({
+    flurry: {
+      "--flurry-time": `${randomBetween(35, 55)}s`,
+      "--flurry-delay": `-${randomBetween(0, 35)}s`,
+    } as CSSProperties,
+    flakes: flakePositions.map((position) => {
+      const fallTime = randomBetween(9, 18);
+      return {
+        "--flake-x": `${position + randomBetween(-3, 3)}%`,
+        "--flake-size": `${randomBetween(2, 7)}px`,
+        "--flake-opacity": randomBetween(.48, .95),
+        "--flake-time": `${fallTime}s`,
+        "--flake-delay": `-${randomBetween(0, fallTime)}s`,
+        "--flake-drift": `${randomBetween(-20, 20)}px`,
+      } as CSSProperties;
+    }),
+  }));
   return <div className="christmas-scene" data-animation={effects.animate && !quizInProgress ? "on" : "off"}
-    data-running={effects.running} aria-hidden="true">
-    {flakePositions.map((position, index) =>
-      <i key={position} className="christmas-flake" style={{
-        "--flake-x": `${position}%`,
-        "--flake-time": `${index % 2 ? 14 + index % 3 : 9 + index % 4}s`,
-        "--flake-delay": `-${(index * 7 % 17) * .53}s`,
-        "--flake-drift": `${index % 2 ? 14 : -11}px`,
-      } as CSSProperties}/>)}
+    data-running={effects.running} style={snow.flurry} aria-hidden="true">
+    {snow.flakes.map((style, index) => <i key={flakePositions[index]} className="christmas-flake" style={style}/>)}
     <div className="christmas-sky"><div className="christmas-sleigh"/></div>
   </div>;
 }

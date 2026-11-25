@@ -491,8 +491,6 @@ form .notice { margin-block: .35rem; }
 }
 .christmas-scene[data-animation="off"] { visibility: hidden; }
 .christmas-flake {
-  --flake-size: 4px;
-  --flake-opacity: .86;
   position: absolute;
   top: 0;
   left: var(--flake-x);
@@ -500,8 +498,6 @@ form .notice { margin-block: .35rem; }
   width: var(--flake-size);
   animation: christmas-snowfall var(--flake-time) var(--flake-delay) linear infinite;
 }
-.christmas-flake:nth-child(2n) { --flake-size: 3px; --flake-opacity: .65; }
-.christmas-flake:nth-child(5n + 1) { --flake-size: 6px; }
 .christmas-flake::before {
   content: "";
   display: block;
@@ -509,6 +505,14 @@ form .notice { margin-block: .35rem; }
   border-radius: 50%;
   background: #fffdfa;
   box-shadow: 0 1px 2px #182b3b59;
+}
+.christmas-flake:nth-child(even)::before {
+  animation: christmas-flurry var(--flurry-time) var(--flurry-delay) ease-in-out infinite;
+}
+@keyframes christmas-flurry {
+  0%, 55%, 100% { opacity: 0; }
+  20%, 30% { opacity: 1; }
+  74% { opacity: .55; }
 }
 @keyframes christmas-snowfall {
   from { transform: translate3d(0, -5%, 0); opacity: 0; }
@@ -579,6 +583,7 @@ form .notice { margin-block: .35rem; }
   to { transform: scaleY(1); }
 }
 .christmas-scene[data-running="false"] :is(.christmas-flake, .christmas-sleigh),
+.christmas-scene[data-running="false"] .christmas-flake::before,
 [data-theme="christmas"][data-snow-running="false"] :where(.competition-card, .competition-card .button, .student-competitions .student-detail .button, .entry-submit)::after {
   animation-play-state: paused;
 }
