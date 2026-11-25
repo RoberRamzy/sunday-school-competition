@@ -207,6 +207,13 @@ input[type="checkbox"] { width: 18px; height: 18px; }
 form .notice { margin-block: .35rem; }
 .handout-bar { display: flex; gap: .85rem; align-items: center; justify-content: space-between; flex-wrap: wrap; margin-block: .8rem; }
 .roster-table [aria-label="Actions"] { width: 1px; }
+.student-roster-table td:nth-child(2) { overflow-wrap: anywhere; }
+.student-row-expanded, .student-edit-row { background: var(--paper); }
+.student-roster-table .student-edit-row > td { width: auto; padding: 0; }
+.student-edit-form { padding: .9rem clamp(.75rem, 2vw, 1.25rem) 1.15rem; }
+.student-edit-form .form-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.student-edit-form .select-wrap select { appearance: none; padding-inline-end: 2.25rem; }
+.student-row-saved { display: block; margin-block-start: .15rem; color: var(--ink); }
 
 @media (max-width: 760px) {
   .header-inner { min-height: 63px; }
@@ -224,7 +231,13 @@ form .notice { margin-block: .35rem; }
   .workspace-sidebar { border-inline-end: 0; border-bottom: 1px solid var(--line); padding: 0 0 .75rem; }
   .workspace-sidebar nav { display: flex; flex-wrap: wrap; margin-block-start: .85rem; }
   .workspace-sidebar nav button { width: auto; }
-  .form-grid { grid-template-columns: 1fr; }
+  .form-grid, .student-edit-form .form-grid { grid-template-columns: minmax(0, 1fr); }
+  .student-roster-table :is(th, td) { padding-inline: .35rem; }
+  .student-roster-table th, .student-roster-table .status { white-space: normal; }
+  .student-roster-table :is(th, td):first-child:not([colspan]) { width: 40px; padding-inline: 0; }
+  .student-roster-table .check-box { width: 36px; }
+  .student-roster-table td > .record-actions { flex-direction: column; align-items: start; gap: 0; }
+  .student-roster-table td > .record-actions .link-button { text-align: start; }
   .section-description { margin-block-end: 1.3rem; }
 }
 @media (max-width: 410px) {
