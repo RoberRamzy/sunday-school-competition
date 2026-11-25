@@ -234,17 +234,21 @@ function ChristmasScene({ effects, quizInProgress }: { effects: Effects; quizInP
       const fallTime = randomBetween(9, 18);
       return {
         "--flake-x": `${position + randomBetween(-3, 3)}%`,
-        "--flake-size": `${randomBetween(2, 7)}px`,
-        "--flake-opacity": randomBetween(.48, .95),
+        "--flake-size": `${randomBetween(4, 9)}px`,
+        "--flake-opacity": randomBetween(.7, 1),
         "--flake-time": `${fallTime}s`,
         "--flake-delay": `-${randomBetween(0, fallTime)}s`,
         "--flake-drift": `${randomBetween(-20, 20)}px`,
       } as CSSProperties;
     }),
   }));
-  return <div className="christmas-scene" data-animation={effects.animate && !quizInProgress ? "on" : "off"}
-    data-running={effects.running} style={snow.flurry} aria-hidden="true">
-    {snow.flakes.map((style, index) => <i key={flakePositions[index]} className="christmas-flake" style={style}/>)}
-    <div className="christmas-sky"><div className="christmas-sleigh"/></div>
-  </div>;
+  const animation = effects.animate && !quizInProgress ? "on" : "off";
+  return <>
+    <div className="christmas-scene" data-animation={animation} data-running={effects.running} style={snow.flurry} aria-hidden="true">
+      {snow.flakes.map((style, index) => <i key={flakePositions[index]} className="christmas-flake" style={style}/>)}
+    </div>
+    <div className="christmas-sky" data-animation={animation} data-running={effects.running} aria-hidden="true">
+      <div className="christmas-sleigh"/>
+    </div>
+  </>;
 }
