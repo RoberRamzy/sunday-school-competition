@@ -92,11 +92,11 @@ function useSeasonalController(active: boolean, quizInProgress: boolean) {
     else if (audio.current) pauseMusic();
   }, [available, ready, visible, preferences.music, playMusic, pauseMusic]);
 
-  useEffect(() => {
-    if (!available || !visible || !preferences.music || musicStatus !== "blocked") return;
+  useLayoutEffect(() => {
+    if (!available || !ready || !visible || !preferences.music || musicStatus === "playing" || musicStatus === "unavailable") return;
 
-    const retryOnInteraction = (event: MouseEvent | KeyboardEvent) => {
-      if (!event.isTrusted || navigator.userActivation?.isActive === false) return;
+    const retryOnInteraction = (event: Event) => {
+      if (!event.isTrusted) return;
       // The music button handles its own click, including keyboard activation.
       if (event.target instanceof Element && event.target.closest("[data-music-toggle]")) return;
       playMusic();
@@ -106,15 +106,17 @@ function useSeasonalController(active: boolean, quizInProgress: boolean) {
     };
     document.addEventListener("pointerdown", retryOnPointer, true);
     document.addEventListener("pointerup", retryOnPointer, true);
+    document.addEventListener("touchend", retryOnInteraction, { capture: true, passive: true });
     document.addEventListener("click", retryOnInteraction, true);
     document.addEventListener("keydown", retryOnInteraction, true);
     return () => {
       document.removeEventListener("pointerdown", retryOnPointer, true);
       document.removeEventListener("pointerup", retryOnPointer, true);
+      document.removeEventListener("touchend", retryOnInteraction, true);
       document.removeEventListener("click", retryOnInteraction, true);
       document.removeEventListener("keydown", retryOnInteraction, true);
     };
-  }, [available, visible, preferences.music, musicStatus, playMusic]);
+  }, [available, ready, visible, preferences.music, musicStatus, playMusic]);
 
   function save(next: typeof defaults) {
     setPreferences(next);
