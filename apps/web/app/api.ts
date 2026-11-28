@@ -1,3 +1,19 @@
+export const DEFAULT_GROUP_ID = "00000000-0000-4000-8000-000000000001";
+export const groupIdPattern = /^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i;
+export type CompetitionGroup = { id: string; name: string };
+
+export function groupHome(groupId?: string) {
+  return groupId && groupId !== DEFAULT_GROUP_ID ? `/groups/${groupId}` : "/";
+}
+
+export function groupGradeQuery(groupId?: string) {
+  return groupId && groupId !== DEFAULT_GROUP_ID ? `?groupId=${encodeURIComponent(groupId)}` : "";
+}
+
+export function overallBoardPath(groupId?: string) {
+  return groupId && groupId !== DEFAULT_GROUP_ID ? `/leaderboards/all/${groupId}` : "/leaderboards/all";
+}
+
 export type Grade = { id: string; name: string };
 export type Theme = "classic" | "christmas";
 export type Principal = {
@@ -5,6 +21,7 @@ export type Principal = {
   displayName: string;
   role: "STUDENT" | "SERVANT" | "SUPER_ADMIN";
   gradeId?: string;
+  groupId?: string;
 };
 export type Language = "en" | "ar";
 export type Translate = (en: string, ar: string) => string;
@@ -16,14 +33,17 @@ export class ApiError extends Error {
 }
 
 export async function apiResponse(path: string, init?: RequestInit) {
+  const headers = new Headers(init?.headers);
+  if (!headers.has("content-type")) headers.set("content-type", "application/json");
+  if (path.startsWith("/admin/") && path !== "/admin/groups" && typeof window !== "undefined" && window.location.pathname === "/staff") {
+    const groupId = new URLSearchParams(window.location.search).get("group");
+    if (groupId && groupIdPattern.test(groupId)) headers.set("x-competition-group", groupId);
+  }
   const response = await fetch(`/api${path}`, {
     ...init,
     credentials: "same-origin",
     cache: "no-store",
-    headers: {
-      "Content-Type": "application/json",
-      ...init?.headers,
-    },
+    headers,
   });
   if (!response.ok) {
     const body = await response.json().catch(() => null);

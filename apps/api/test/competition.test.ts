@@ -40,9 +40,10 @@ function authCookie(response: Response) {
   return header.split(';')[0];
 }
 
-function request(path: string, cookie?: string, data?: unknown, method?: string) {
+function request(path: string, cookie?: string, data?: unknown, method?: string, groupId?: string) {
   const headers = new Headers({ Origin: origin });
   if (cookie) headers.set('Cookie', cookie);
+  if (groupId) headers.set('x-competition-group', groupId);
   if (data !== undefined) headers.set('Content-Type', 'application/json');
   return fetch(`${url}/api${path}`, {
     method: method ?? (data !== undefined ? 'POST' : 'GET'),
@@ -403,10 +404,11 @@ test('shared draft questions and dense overall and grade leaderboards use explic
   assert.equal((await request(boards, servant)).status, 403);
 
   await ok(request(staff + '/activate', admin, {}));
-  assert.equal((await request(staff, admin, draft, 'PATCH')).status, 409);
+  await ok(request(staff, admin, draft, 'PATCH'));
   assert.equal((await request('/admin/questions/' + questions[0].id, admin, { points: 100 }, 'PATCH')).status, 404);
   const attempts = await Promise.all(students.map(({ cookie }) =>
     ok<ResponseState>(request(`/competitions/${id}/start`, cookie, {}))));
+  assert.equal((await request(staff, admin, draft, 'PATCH')).status, 409);
   for (const [index, attempt] of attempts.entries()) {
     const quiz = await db.attemptQuestion.findMany({ where: { attemptId: attempt.id }, select: { questionId: true } });
     assert.deepEqual(quiz.map(row => row.questionId).sort(), questions.map(q => q.id).sort());
@@ -415,7 +417,8 @@ test('shared draft questions and dense overall and grade leaderboards use explic
   }
   await ok(request(boards, admin, { scopes: [gradeId], tiePolicy: 'SCORE_ONLY' }, 'PUT'));
   const early = await ok<Leaderboard>(request(boards, admin));
-  assert.equal((await request(boards + '/publish', admin, { revision: early.revision })).status, 409);
+  await ok(request(boards + '/publish', admin, { revision: early.revision }));
+  assert.equal((await ok<{ provisional: boolean }>(request(publicPath))).provisional, true);
 
   const points = [3, 2, 2, 1, 0, 3];
   for (const [index, attempt] of attempts.entries()) {
@@ -425,6 +428,8 @@ test('shared draft questions and dense overall and grade leaderboards use explic
       status: 'SUBMITTED', score: points[index], startedAt, finishedAt, submittedAt: finishedAt,
     } });
   }
+  assert.equal((await ok<Leaderboard['publication']>(request(publicPath))).boards[0].rows.length, 5);
+  await ok(request(boards + '/unpublish', admin, {}));
   await ok(request(staff + '/close', admin, {}));
   const first = await ok<Leaderboard>(request(boards, admin));
   assert.deepEqual(first.boards.find(board => board.scope === 'overall')?.rows.map(row => row.rank), [1, 1, 2, 2, 3, 4]);
@@ -527,7 +532,7 @@ test('overall leaderboard totals published results, shares ranks and removes del
   const preview = await ok<Leaderboard['publication'] & { published: boolean }>(request(staffPath, servant));
   assert.equal(preview.published, false);
   assert.deepEqual(rows(preview).map(({ name, rank, score }) => [name, rank, score]),
-    [['Overall A', 1, 120], ['Overall B', 1, 120], ['Overall C', 2, 90]]);
+    [['Overall B', 1, 120], ['Overall A', 2, 120], ['Overall C', 3, 90]]);
   await ok(request(staffPath, servant, { published: true }, 'PUT'));
   assert.deepEqual(rows(await ok<Leaderboard['publication']>(request(publicPath))), rows(preview));
   assert.equal((await request('/admin/competitions/' + second.id, admin, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
@@ -555,7 +560,7 @@ test('servants manage competitions only when assigned every eligible grade', { s
   assert.equal((await request(path, servant, { ...draft, gradeIds: [gradeId] }, 'PATCH')).status, 403);
   await ok(request(path, servant, { ...draft, title: 'Edited scoped competition' }, 'PATCH'));
   for (const action of ['activate', 'close', 'publish', 'archive']) await ok(request(path + '/' + action, servant, {}));
-  assert.equal((await request(path + '/leaderboard', servant)).status, 403);
+  await ok(request(path + '/leaderboard', servant));
   assert.equal((await request(path, servant, { confirmation: 'DELETE' }, 'DELETE')).status, 204);
 
   const shared = await ok<{ id: string }>(request('/admin/competitions', admin, { ...draft, gradeIds: [gradeId, otherGrade] }));
@@ -649,4 +654,133 @@ test('only a super admin can delete another staff account and its sessions', { s
   assert.equal((await request('/auth/me', cookie)).status, 401);
   assert.equal(await db.session.count({ where: { staffId: other.id } }), 0);
   assert.equal((await request('/auth/me', admin)).status, 200);
+});
+
+test('isolated group staff can publish live boards, replace attempts, and safely correct quizzes', { skip: !databaseUrl }, async () => {
+  const { id: groupId } = await ok<{ id: string }>(request('/admin/groups', admin, { name: 'Separate competition group' }));
+  const staffRoute = (path: string, data?: unknown, method?: string) => request(path, admin, data, method, groupId);
+  const { id: fourth } = await ok<{ id: string }>(staffRoute('/admin/grades', { name: 'Grade 4' }));
+  const { id: fifth } = await ok<{ id: string }>(staffRoute('/admin/grades', { name: 'Grade 5' }));
+  const gradeList = (path: string, cookie?: string) => ok<{ id: string }[]>(request(path, cookie));
+  assert.deepEqual((await gradeList('/auth/grades?groupId=' + groupId)).map(grade => grade.id), [fourth, fifth]);
+  assert.ok(!(await gradeList('/auth/grades')).some(grade => grade.id === fourth));
+  assert.ok(!(await gradeList('/admin/grades', admin)).some(grade => grade.id === fifth));
+  assert.equal((await request('/admin/groups', servant)).status, 403);
+
+  await db.adminUser.create({ data: {
+    groupId, username: 'group-four-servant', fullName: 'Group four servant',
+    passwordHash: await hashPassword(password), grades: { create: { gradeId: fourth } },
+  } });
+  const groupServant = authCookie(await request('/auth/staff-login', undefined, { username: 'group-four-servant', password }));
+  assert.deepEqual((await gradeList('/admin/grades', groupServant)).map(grade => grade.id), [fourth]);
+  assert.equal((await request('/admin/grades', servant, undefined, undefined, groupId)).status, 403);
+
+  const items = ['Before correction', 'After correction'].map(text => ({ id: randomUUID(), text }));
+  const question = {
+    id: randomUUID(), text: 'Question to correct', type: 'MCQ', difficulty: 'EASY', points: 3,
+    items, correctOrder: [items[0].id], sortingMode: 'PARTIAL',
+  };
+  const opensAt = minute(-1);
+  const closesAt = minute(15);
+  const draft = { title: 'Group-four competition', instructions: '', durationMinutes: 5, opensAt, closesAt, questions: [question] };
+  assert.equal((await staffRoute('/admin/competitions', { ...draft, gradeIds: [fourth, gradeId] })).status, 400);
+  const { id } = await ok<{ id: string }>(staffRoute('/admin/competitions', { ...draft, gradeIds: [fourth, fifth] }));
+  const path = '/admin/competitions/' + id;
+  const leaderboard = path + '/leaderboard';
+  const publicPath = '/leaderboards/' + id;
+  assert.equal((await request(path, groupServant)).status, 403); // A partly assigned servant cannot see the draft.
+  await ok(staffRoute(path + '/activate', {}));
+  assert.equal((await request(path, groupServant, { title: 'No' }, 'PATCH')).status, 403);
+  assert.equal((await request(leaderboard, groupServant)).status, 403);
+  await ok(staffRoute(path, { gradeIds: [fourth] }, 'PATCH'));
+  assert.equal((await request(path, servant)).status, 404);
+  assert.equal((await request(path + '/results/export?format=csv', servant)).status, 404);
+  assert.equal((await request('/student/competitions/' + id, students[0].cookie)).status, 404);
+  assert.deepEqual(await ok(request('/auth/competition-entry/' + id)), { groupId });
+
+  const actor = await db.student.create({ data: {
+    gradeId: fourth, fullName: 'Grade four student A', displayLabel: 'A',
+    status: 'ACTIVE', pinHash: await hashPassword(pin), activationCodeUsedAt: new Date(),
+  } });
+  const next = await db.student.create({ data: {
+    gradeId: fourth, fullName: 'Grade four student B', displayLabel: 'B',
+    status: 'ACTIVE', pinHash: await hashPassword(pin), activationCodeUsedAt: new Date(),
+  } });
+  const login = async (studentId: string) => authCookie(await request('/auth/login', undefined, { groupId, gradeId: fourth, studentId, pin }));
+  assert.equal((await request('/auth/login', undefined, { gradeId: fourth, studentId: actor.id, pin })).status, 401);
+  assert.deepEqual(await ok(request('/auth/grades/' + fourth + '/students')), []);
+  const [firstCookie, nextCookie] = await Promise.all([login(actor.id), login(next.id)]);
+  assert.equal((await request('/admin/students/' + actor.id, groupServant, { gradeId }, 'PATCH')).status, 403);
+
+  const first = await ok<ResponseState & { timerEnabled: boolean }>(request('/competitions/' + id + '/start', firstCookie, {}));
+  assert.equal(first.timerEnabled, true);
+  await ok(request('/attempts/' + first.id + '/answers', firstCookie, {
+    questionId: question.id, itemIds: [items[0].id], advance: false, revision: 1,
+  }));
+  await ok(request(path, groupServant, { timerEnabled: false }, 'PATCH'));
+  const resumed = await ok<ResponseState & { timerEnabled: boolean }>(request('/student/attempts/' + first.id, firstCookie));
+  assert.equal(resumed.timerEnabled, true);
+  assert.equal(resumed.expiresAt, first.expiresAt);
+  assert.deepEqual(resumed.question, first.question);
+  assert.deepEqual(resumed.savedAnswer, [items[0].id]);
+  const future = await ok<ResponseState & { timerEnabled: boolean }>(request('/competitions/' + id + '/start', nextCookie, {}));
+  assert.equal(future.timerEnabled, false);
+  assert.equal(future.expiresAt, closesAt);
+  assert.equal((await request(path, groupServant, { closesAt: minute(2) }, 'PATCH')).status, 409);
+  assert.equal((await request(path, groupServant, { questions: [question] }, 'PATCH')).status, 409);
+
+  await ok(advance(first.id, question.id, firstCookie, [items[0].id], 2));
+  await ok(advance(future.id, question.id, nextCookie, [items[1].id]));
+  await ok(request(leaderboard, groupServant, { scopes: ['overall', fourth], tiePolicy: 'SCORE_THEN_TIME' }, 'PUT'));
+  const { revision } = await ok<Leaderboard>(request(leaderboard, groupServant));
+  await ok(request(leaderboard + '/publish', groupServant, { revision }));
+  await ok(request('/admin/leaderboards/all', groupServant, { published: true }, 'PUT'));
+  const groupOverall = '/leaderboards/all/' + groupId;
+  assert.equal((await ok<Leaderboard['publication']>(request(publicPath))).boards[0].rows.length, 0);
+
+  await ok(request('/attempts/' + first.id + '/submit', firstCookie, {}));
+  const ended = await db.attempt.findUniqueOrThrow({ where: { id: first.id } });
+  assert.equal((await ok<Leaderboard['publication']>(request(publicPath))).boards[0].rows[0].score, 3);
+  assert.equal((await ok<Leaderboard['publication']>(request(groupOverall))).boards[0].rows[0].score, 3);
+  assert.ok(!(await ok<Leaderboard>(request('/admin/leaderboards/all', servant))).boards[0].rows.some(row => row.name === actor.fullName));
+  assert.equal((await ok<{ result: unknown }>(request('/student/competitions/' + id, firstCookie))).result, null);
+
+  const [correction, submitted] = await Promise.all([
+    request(path, groupServant, { answerKeys: [{ questionId: question.id, correctOrder: [items[1].id] }] }, 'PATCH'),
+    request('/attempts/' + future.id + '/submit', nextCookie, {}),
+  ]);
+  await ok(Promise.resolve(correction));
+  await ok(Promise.resolve(submitted));
+  const rescored = await db.attempt.findUniqueOrThrow({ where: { id: first.id } });
+  assert.equal(rescored.finishedAt!.getTime(), ended.finishedAt!.getTime());
+  assert.equal(Number(rescored.score), 0);
+  assert.equal((await db.attempt.findUniqueOrThrow({ where: { id: future.id } })).expiresAt!.toISOString(), future.expiresAt);
+  assert.deepEqual((await ok<Leaderboard['publication']>(request(groupOverall))).boards[0].rows.map(row => row.score), [3, 0]);
+
+  assert.equal((await request('/admin/attempts/' + first.id + '/authorize-replacement', servant, { reason: 'Wrong group' })).status, 403);
+  const { id: replacement } = await ok<{ id: string }>(request('/admin/attempts/' + first.id + '/authorize-replacement', groupServant, { reason: 'Connectivity issue' }));
+  assert.equal((await ok<Leaderboard['publication']>(request(publicPath))).boards[0].rows.length, 1);
+  const retry = await ok<ResponseState>(request('/competitions/' + id + '/start', firstCookie, {}));
+  assert.equal(retry.id, replacement);
+  await ok(advance(retry.id, question.id, firstCookie, [items[1].id]));
+  const deadline = await forceDeadline(retry.id);
+  const startedAt = new Date(deadline.getTime() - 1_002);
+  await db.attempt.update({ where: { id: retry.id }, data: { startedAt } });
+  await db.attempt.update({ where: { id: future.id }, data: { startedAt, finishedAt: new Date(deadline.getTime() - 1) } });
+  let finalRows = (await ok<Leaderboard['publication']>(request(groupOverall))).boards[0].rows;
+  assert.deepEqual(finalRows.map(({ rank, name }) => [rank, name]), [[1, next.fullName], [2, actor.fullName]]);
+  await db.attempt.update({ where: { id: future.id }, data: { finishedAt: deadline } });
+  finalRows = (await ok<Leaderboard['publication']>(request(groupOverall))).boards[0].rows;
+  assert.deepEqual(finalRows.map(row => row.rank), [1, 1]);
+  await db.attempt.update({ where: { id: future.id }, data: { finishedAt: new Date(deadline.getTime() + 1000) } });
+  finalRows = (await ok<Leaderboard['publication']>(request(groupOverall))).boards[0].rows;
+  assert.deepEqual(finalRows.map(({ rank, name }) => [rank, name]), [[1, actor.fullName], [2, next.fullName]]);
+  await ok(request(path + '/close', groupServant, {}));
+  assert.equal((await ok<Leaderboard['publication']>(request(groupOverall))).boards[0].rows.length, 2);
+  await ok(request(leaderboard + '/unpublish', groupServant, {}));
+  assert.equal((await ok<Leaderboard['publication']>(request(groupOverall))).boards[0].rows.length, 0);
+  await ok(request(path + '/publish', groupServant, {}));
+  assert.equal((await ok<Leaderboard['publication']>(request(groupOverall))).boards[0].rows.length, 2);
+  await ok(request('/admin/leaderboards/all', groupServant, { published: false }, 'PUT'));
+  assert.equal((await request(groupOverall)).status, 404);
 });

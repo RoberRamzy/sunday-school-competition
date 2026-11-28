@@ -9,7 +9,7 @@ type StudentRow = { studentId: string; displayLabel: string; gradeId: string; at
 type Monitoring = { counts: { notStarted: number; inProgress: number; completed: number; timedOut: number }; students: StudentRow[] };
 type AuditEvent = { id?: string; eventType: string; createdAt: string; metadataJson?: { reason?: string } };
 type AttemptReview = {
-  id: string; status: string; startedAt: string | null; expiresAt: string | null;
+  id: string; status: string; canReplace?: boolean; startedAt: string | null; expiresAt: string | null;
   finishedAt: string | null; submittedAt: string | null; auditEvents?: AuditEvent[]; events?: AuditEvent[];
 };
 type View = "monitoring" | "results";
@@ -179,7 +179,7 @@ export function CompetitionMonitor({ competition, grades, admin, language, t }: 
       </form>}
       {!action && <div className="record-actions">
         <button className="button" type="button" disabled={busy} onClick={() => setAction("flag")}>{t("Flag attempt", "وضع تنبيه على المحاولة")}</button>
-        {admin && ["IN_PROGRESS", "SUBMITTED", "TIMED_OUT"].includes(review.attempt.status) && <button className="button" type="button" disabled={busy} onClick={() => setAction("authorize-replacement")}>{t("Authorize replacement", "السماح بمحاولة بديلة")}</button>}
+        {review.attempt.canReplace && <button className="button" type="button" disabled={busy} onClick={() => setAction("authorize-replacement")}>{t("Authorize replacement", "السماح بمحاولة بديلة")}</button>}
         <button className="button" type="button" disabled={busy} onClick={() => setReview(null)}>{t("Close review", "إغلاق المراجعة")}</button>
       </div>}
     </div>}

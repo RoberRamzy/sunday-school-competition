@@ -16,8 +16,8 @@ export class DeletionController {
   constructor(private readonly deletion: DeletionService) {}
 
   @Get('staff')
-  listStaff() {
-    return this.deletion.staffList();
+  listStaff(@Actor() actor: StaffPrincipal) {
+    return this.deletion.staffList(actor);
   }
 
   @Delete('competitions/:id')

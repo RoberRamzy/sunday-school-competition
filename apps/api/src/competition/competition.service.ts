@@ -1,17 +1,18 @@
 import { BadRequestException, ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
 import type { z } from 'zod';
-import { audit, gradeScope, lockStaff, StaffPrincipal } from '../auth/principal';
+import { audit, gradeScope, groupOf, lockStaff, StaffPrincipal } from '../auth/principal';
 import { Database, isDatabaseError } from '../database/database.module';
 import { AttemptService, lockCompetition } from './attempt.service';
 import {
   category, competitionInfo, CompetitionInput, databaseTime, effectiveStatus, gradeSelections, requireCompetitionManagement, snapshot, validateQuestion, validateSetup,
 } from './competition-data';
-import { competitionPatch } from './competition.input';
+import { competitionPatch, snapshotInput } from './competition.input';
+import { LeaderboardService } from './leaderboard';
 
 @Injectable()
 export class CompetitionService {
-  constructor(private readonly db: Database, private readonly attempts: AttemptService) {}
+  constructor(private readonly db: Database, private readonly attempts: AttemptService, private readonly leaderboards: LeaderboardService) {}
 
   async list(actor: StaffPrincipal) {
     return this.db.$transaction(async (tx) => {
@@ -19,10 +20,10 @@ export class CompetitionService {
       const scope = await gradeScope(tx, actor);
       const gradeFilter = scope ? { gradeId: { in: scope } } : undefined;
       const rows = await tx.competition.findMany({
-        where: gradeFilter ? {
+        where: { groupId: groupOf(actor), ...(gradeFilter && {
           grades: { some: gradeFilter },
           OR: [{ status: { not: 'DRAFT' } }, { grades: { every: gradeFilter } }],
-        } : undefined,
+        }) },
         include: { grades: { ...gradeSelections, where: gradeFilter } },
         orderBy: { opensAt: 'desc' },
       });
@@ -36,7 +37,7 @@ export class CompetitionService {
       await lockStaff(tx, actor);
       const scope = await gradeScope(tx, actor);
       const row = await tx.competition.findUnique({
-        where: { id },
+        where: { id, groupId: groupOf(actor) },
         include: {
           grades: { ...gradeSelections, where: scope ? { gradeId: { in: scope } } : undefined },
           _count: { select: { grades: true } },
@@ -46,7 +47,22 @@ export class CompetitionService {
       const canManage = !scope || (row.grades.length > 0 && row.grades.length === row._count.grades);
       if (scope && (!row.grades.length || (row.status === 'DRAFT' && !canManage))) throw new ForbiddenException();
       const info = { ...competitionInfo(row, await databaseTime(tx)), canManage };
-      if (row.status !== 'DRAFT') return info;
+      if (!canManage) return info;
+      const [started, completedAttempts] = await Promise.all([
+        tx.attempt.count({ where: { competitionId: id, startedAt: { not: null } } }),
+        tx.attempt.count({ where: { competitionId: id, status: { in: ['SUBMITTED', 'TIMED_OUT'] } } }),
+      ]);
+      const quizLocked = row.hasStarted || started > 0 || ['CLOSED', 'ARCHIVED'].includes(info.status);
+      if (quizLocked) {
+        const frozen = row.grades.flatMap(grade => grade.questions.flatMap(link => {
+          const parsed = snapshotInput.safeParse(link.snapshot);
+          if (!parsed.success) return [];
+          const { gradeId: _grade, ...question } = parsed.data;
+          return [question];
+        }));
+        const questions = [...new Map(frozen.map(question => [question.id, question])).values()];
+        return { ...info, quizLocked, questions, completedAttempts };
+      }
       const ids = row.grades.flatMap(({ questions }) => questions.map(({ questionId }) => questionId));
       const questions = new Map((await tx.question.findMany({ where: { id: { in: ids } } }))
         .map(question => [question.id, snapshot(question)]));
@@ -66,41 +82,57 @@ export class CompetitionService {
     try {
       return await this.db.$transaction(async (tx) => {
         await lockStaff(tx, actor);
-        let data = input as CompetitionInput;
-        let sharedDraft = false;
+        const { answerKeys, ...changes } = input;
+        let data = changes as CompetitionInput;
+        let current: Awaited<ReturnType<typeof lockCompetition>> | undefined;
         if (id) {
-          const current = await lockCompetition(tx, id, true);
+          current = await lockCompetition(tx, id, true);
           await requireCompetitionManagement(tx, actor, id);
-          sharedDraft = current.sharedQuestions;
-          if (current.status !== 'DRAFT') throw new ConflictException('Only a draft can be edited');
+          const now = await databaseTime(tx);
+          if (answerKeys || current.hasStarted || ['CLOSED', 'ARCHIVED'].includes(effectiveStatus(current, now)) ||
+              await tx.attempt.count({ where: { competitionId: id, startedAt: { not: null } } })) {
+            return this.saveRestricted(tx, actor, current, input, now);
+          }
           const row = await tx.competition.findUniqueOrThrow({ where: { id }, include: { grades: gradeSelections } });
-          const prior = competitionInfo(row, await databaseTime(tx));
-          data = { ...prior, opensAt: prior.opensAt.toISOString(), closesAt: prior.closesAt.toISOString(), grades: prior.grades as CompetitionInput['grades'], ...input };
+          const { grades: priorGrades, ...prior } = competitionInfo(row, now);
+          const shared = current.sharedQuestions ? {
+            gradeIds: row.grades.map(grade => grade.gradeId),
+            questions: (await tx.question.findMany({ where: { competitionId: id } }))
+              .map(question => { const { gradeId: _grade, ...fields } = snapshot(question); return fields; })
+              .sort((a, b) => (priorGrades[0]?.questionIds.indexOf(a.id) ?? 0) - (priorGrades[0]?.questionIds.indexOf(b.id) ?? 0)),
+          } : { grades: priorGrades as CompetitionInput['grades'] };
+          data = { ...prior, opensAt: prior.opensAt.toISOString(), closesAt: prior.closesAt.toISOString(), ...shared, ...changes };
+          if (current.status !== 'DRAFT' && new Date(data.closesAt) <= now) throw new BadRequestException('Closing time must be in the future');
         }
         const scope = await gradeScope(tx, actor);
         const requestedGrades = data.gradeIds ?? data.grades?.map(({ gradeId }) => gradeId) ?? [];
         if (scope && requestedGrades.some(gradeId => !scope.includes(gradeId))) throw new ForbiddenException();
-        if (data.gradeIds || data.questions) {
-          return this.saveShared(tx, actor, data, id);
+        if (await tx.grade.count({ where: { id: { in: requestedGrades }, groupId: groupOf(actor) } }) !== new Set(requestedGrades).size) {
+          throw new BadRequestException('Choose grades from this competition group');
         }
-        if (!id || !data.grades || sharedDraft) {
+        if (data.gradeIds || data.questions) {
+          return this.saveShared(tx, actor, data, current);
+        }
+        if (!id || !current || !data.grades || current.sharedQuestions) {
           throw new BadRequestException('Supply eligible grades and shared questions');
         }
         validateSetup({ ...data, grades: data.grades });
-        const { title, description, tiePolicy, instructions, opensAt, closesAt, durationMinutes } = data;
+        const { title, description, tiePolicy, instructions, opensAt, closesAt, durationMinutes, timerEnabled } = data;
         const grades = data.grades;
-        await this.validateSelections(tx, grades);
-        const scalar = { title, description, tiePolicy, instructions, opensAt: new Date(opensAt), closesAt: new Date(closesAt), durationMinutes };
+        const byId = await this.validateSelections(tx, grades);
+        const scalar = { title, description, tiePolicy, instructions, opensAt: new Date(opensAt), closesAt: new Date(closesAt), durationMinutes, timerEnabled };
         const gradeRecords = grades.map((grade) => ({
           gradeId: grade.gradeId, blueprint: grade.blueprint,
-          questions: { create: grade.questionIds.map((questionId, position) => ({ questionId, position })) },
+          questions: { create: grade.questionIds.map((questionId, position) => ({
+            questionId, position, snapshot: current.status !== 'DRAFT' ? snapshot(byId.get(questionId)!) : undefined,
+          })) },
         }));
         const row = await tx.competition.update({
           where: { id }, data: { ...scalar, grades: { deleteMany: {}, create: gradeRecords } }, include: { grades: gradeSelections },
         });
         await audit(tx, actor, 'COMPETITION_UPDATED', { competitionId: row.id });
         return competitionInfo(row, await databaseTime(tx));
-      }, { timeout: 15000 });
+      }, { timeout: 60000 });
     } catch (error) {
       if (isDatabaseError(error, 'P2002')) throw new ConflictException('A question ID is already in use');
       if (isDatabaseError(error, 'P2003')) throw new NotFoundException('Selected grade or question was not found');
@@ -108,20 +140,21 @@ export class CompetitionService {
     }
   }
 
-  private async saveShared(tx: Prisma.TransactionClient, actor: StaffPrincipal, data: CompetitionInput, id?: string) {
-    const { gradeIds, questions, title, description, instructions, opensAt, closesAt, durationMinutes, tiePolicy } = data;
+  private async saveShared(tx: Prisma.TransactionClient, actor: StaffPrincipal, data: CompetitionInput, current?: Awaited<ReturnType<typeof lockCompetition>>) {
+    const { gradeIds, questions, title, description, instructions, opensAt, closesAt, durationMinutes, timerEnabled, tiePolicy } = data;
     if (!gradeIds || !questions || new Set(gradeIds).size !== gradeIds.length ||
         new Set(questions.map(question => question.id)).size !== questions.length) {
       throw new BadRequestException('Supply unique grade IDs and a shared question list');
     }
     if (new Date(opensAt) >= new Date(closesAt)) throw new BadRequestException('Closing time must follow opening time');
     if (await tx.grade.count({ where: { id: { in: gradeIds } } }) !== gradeIds.length) throw new BadRequestException('Unknown grade');
+    if (current && current.status !== 'DRAFT' && !questions.length) throw new BadRequestException('Add at least one question');
     questions.forEach(validateQuestion);
     const scalar = { title, description, instructions, opensAt: new Date(opensAt), closesAt: new Date(closesAt),
-      durationMinutes, tiePolicy, sharedQuestions: true };
-    const competition = id
-      ? await tx.competition.update({ where: { id }, data: scalar })
-      : await tx.competition.create({ data: scalar });
+      durationMinutes, timerEnabled, tiePolicy, sharedQuestions: true };
+    const competition = current
+      ? await tx.competition.update({ where: { id: current.id }, data: scalar })
+      : await tx.competition.create({ data: { ...scalar, groupId: groupOf(actor) } });
     await tx.competitionGrade.deleteMany({ where: { competitionId: competition.id } });
     await tx.question.deleteMany({ where: { competitionId: competition.id } });
     await tx.question.createMany({
@@ -131,12 +164,79 @@ export class CompetitionService {
       where: { id: competition.id },
       data: { leaderboardScopes: competition.leaderboardScopes.filter(scope => scope === 'overall' || gradeIds.includes(scope)),
         grades: { create: gradeIds.map(gradeId => ({
-        gradeId, blueprint: [], questions: { create: questions.map(({ id: questionId }, position) => ({ questionId, position })) },
+        gradeId, blueprint: [], questions: { create: questions.map((question, position) => ({
+            questionId: question.id, position,
+            snapshot: current && current.status !== 'DRAFT' ? { ...question, gradeId: null } : undefined,
+          })) },
       })) } },
       include: { grades: gradeSelections },
     });
-    await audit(tx, actor, id ? 'COMPETITION_UPDATED' : 'COMPETITION_CREATED', { competitionId: row.id });
+    await audit(tx, actor, current ? 'COMPETITION_UPDATED' : 'COMPETITION_CREATED', { competitionId: row.id });
     return { ...competitionInfo(row, await databaseTime(tx)), questions };
+  }
+
+  private async saveRestricted(tx: Prisma.TransactionClient, actor: StaffPrincipal,
+    competition: Awaited<ReturnType<typeof lockCompetition>>, input: z.infer<typeof competitionPatch>, now: Date) {
+    const { id } = competition;
+    const { title, description, instructions, closesAt, durationMinutes, timerEnabled, answerKeys } = input;
+    if (input.opensAt !== undefined || input.gradeIds || input.grades || input.questions || input.tiePolicy) {
+      throw new ConflictException('Quiz structure and opening time are locked');
+    }
+    if (closesAt && Date.parse(closesAt) !== competition.closesAt.getTime()) {
+      const close = new Date(closesAt);
+      if (['CLOSED', 'ARCHIVED'].includes(effectiveStatus(competition, now)) ||
+          close <= now || close <= competition.opensAt || await tx.attempt.count({
+            where: { competitionId: id, status: 'IN_PROGRESS', expiresAt: { gt: close } },
+          })) throw new ConflictException('Closing time cannot shorten an attempt or reopen a closed competition');
+    }
+    await this.attempts.reconcileScope(tx, { competitionId: id }, now);
+    let corrected = false;
+    if (answerKeys) {
+      const links = await tx.competitionQuestion.findMany({
+        where: { competitionGrade: { competitionId: id } },
+        select: { questionId: true, snapshot: true },
+      });
+      const byQuestion = new Map(links.map(link => [link.questionId, link.snapshot]));
+      if (new Set(answerKeys.map(key => key.questionId)).size !== answerKeys.length) {
+        throw new BadRequestException('Select a question only once');
+      }
+      for (const key of answerKeys) {
+        const original = snapshotInput.safeParse(byQuestion.get(key.questionId));
+        if (!original.success) throw new BadRequestException('Question is not in this competition');
+        validateQuestion({ ...original.data, correctOrder: key.correctOrder });
+      }
+      const changed = answerKeys.filter(key => {
+        const previous = snapshotInput.parse(byQuestion.get(key.questionId)).correctOrder;
+        return previous.length !== key.correctOrder.length || key.correctOrder.some((id, index) => id !== previous[index]);
+      });
+      if (changed.length) {
+        const values = Prisma.join(changed.map(key => Prisma.sql
+          `(${key.questionId}::uuid, ${JSON.stringify(key.correctOrder)}::jsonb)`));
+        await tx.$executeRaw`
+          UPDATE "CompetitionQuestion" AS q
+          SET snapshot = jsonb_set(q.snapshot, '{correctOrder}', keys.answer)
+          FROM "CompetitionGrade" AS grade, (VALUES ${values}) AS keys(id, answer)
+          WHERE q."competitionGradeId" = grade.id AND grade."competitionId" = ${id}::uuid AND q."questionId" = keys.id
+        `;
+        await tx.$executeRaw`
+          UPDATE "AttemptQuestion" AS q
+          SET snapshot = jsonb_set(q.snapshot, '{correctOrder}', keys.answer)
+          FROM "Attempt" AS a, (VALUES ${values}) AS keys(id, answer)
+          WHERE q."attemptId" = a.id AND a."competitionId" = ${id}::uuid AND q."questionId" = keys.id
+            AND a.status <> 'INVALIDATED'
+        `;
+        const rescored = await this.attempts.regrade(tx, id);
+        corrected = true;
+        await audit(tx, actor, 'COMPETITION_ANSWER_KEYS_CORRECTED', { competitionId: id, questionIds: changed.map(key => key.questionId), rescored });
+      }
+    }
+    const row = await tx.competition.update({
+      where: { id }, include: { grades: gradeSelections },
+      data: { title, description, instructions, closesAt: closesAt ? new Date(closesAt) : undefined, durationMinutes, timerEnabled },
+    });
+    if (corrected) await this.leaderboards.refreshPublished(tx, id);
+    await audit(tx, actor, 'COMPETITION_UPDATED', { competitionId: id });
+    return competitionInfo(row, now);
   }
 
   private async validateSelections(tx: Prisma.TransactionClient, grades: NonNullable<CompetitionInput['grades']>) {

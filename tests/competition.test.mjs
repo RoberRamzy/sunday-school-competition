@@ -203,3 +203,110 @@ test('fixed grade quiz resumes, saves through a theme change, and ranks only aft
     }
   }
 });
+
+test('group workspace, Arabic entry, and signed-out live standings follow the same competition', async () => {
+  const engine = await browser();
+  try {
+    const admin = await adminSession(engine);
+    const staffPage = await admin.newPage();
+    await staffPage.goto('/staff');
+    await staffPage.getByRole('button', { name: 'Competition groups', exact: true }).click();
+    const groupName = 'QA group ' + crypto.randomUUID();
+    await staffPage.getByLabel('Group name').fill(groupName);
+    await staffPage.getByRole('button', { name: 'Create group', exact: true }).click();
+    await staffPage.waitForURL(url => url.pathname === '/staff' && url.searchParams.has('group'));
+    const group = { id: new URL(staffPage.url()).searchParams.get('group') };
+    assert.equal(await staffPage.getByLabel('Current group').locator('option:checked').innerText(), groupName);
+    await staffPage.getByRole('button', { name: 'Competition groups', exact: true }).click();
+    assert.equal(await staffPage.getByRole('link', { name: 'Open student link' }).getAttribute('href'), '/groups/' + group.id);
+
+    const groupApi = (path, method, data) => admin.request.fetch('/api' + path, {
+      method, data, headers: { Origin: new URL(staffPage.url()).origin, 'x-competition-group': group.id },
+    });
+    const createGrade = async name => (await success(await groupApi('/admin/grades', 'POST', { name }))).json();
+    const fourth = await createGrade('Grade 4');
+    await createGrade('Grade 5');
+    const student = await (await success(await groupApi('/admin/students', 'POST', {
+      gradeId: fourth.id, fullName: 'QA Grade Four Student', displayLabel: 'QA Grade Four Student',
+    }))).json();
+    const handout = await success(await groupApi('/admin/grades/' + fourth.id + '/activation-handout', 'POST', { studentIds: [student.id] }));
+    const { default: ExcelJS } = await import('exceljs');
+    const workbook = new ExcelJS.Workbook();
+    await workbook.xlsx.load(await handout.body());
+    const activationCode = workbook.worksheets[0].getRow(2).getCell(2).value;
+    const title = 'QA group competition';
+    const items = ['Correct choice', 'Other choice'].map(text => ({ id: crypto.randomUUID(), text }));
+    const question = {
+      id: crypto.randomUUID(), type: 'MCQ', difficulty: 'EASY', text: 'Group quiz question', points: 2,
+      items, correctOrder: [items[0].id], sortingMode: 'PARTIAL',
+    };
+    const closesAt = new Date(Date.now() + 600000).toISOString();
+    const { id } = await (await success(await groupApi('/admin/competitions', 'POST', {
+      title, instructions: '', opensAt: new Date(Date.now() - 60000).toISOString(), closesAt,
+      durationMinutes: 5, gradeIds: [fourth.id], questions: [question],
+    }))).json();
+    const competitionPath = '/admin/competitions/' + id;
+    const boardAdmin = competitionPath + '/leaderboard';
+    await success(await groupApi(competitionPath + '/activate', 'POST', {}));
+
+    await staffPage.getByRole('button', { name: 'Competitions', exact: true }).click();
+    await staffPage.getByRole('article').filter({ hasText: title }).getByRole('button', { name: 'Open competition' }).click();
+    await staffPage.getByRole('button', { name: 'Edit competition', exact: true }).click();
+    await staffPage.getByRole('checkbox', { name: 'Attempt timer' }).uncheck();
+    await staffPage.getByRole('button', { name: 'Save competition' }).click();
+    await staffPage.getByRole('button', { name: 'Leaderboards', exact: true }).click();
+    await staffPage.getByRole('checkbox', { name: 'Publish Overall', exact: true }).check();
+    await staffPage.getByRole('button', { name: 'Save leaderboard settings' }).click();
+    await staffPage.getByRole('button', { name: 'Publish leaderboard', exact: true }).click();
+    await staffPage.getByRole('link', { name: 'Open public leaderboard' }).waitFor();
+
+    const visitor = await context(engine, { viewport: { width: 390, height: 815 } });
+    const landing = await visitor.newPage();
+    await landing.goto('/');
+    await landing.getByRole('option', { name: 'Grade 1', exact: true }).waitFor({ state: 'attached' });
+    assert.equal(await landing.getByRole('option', { name: 'Grade 4', exact: true }).count(), 0);
+    await visitor.addCookies([{ url: new URL(staffPage.url()).origin, name: 'sunday-school-language', value: 'ar' }]);
+    await landing.goto('/competitions/' + id);
+    await landing.getByRole('option', { name: 'Grade 4', exact: true }).waitFor({ state: 'attached' });
+    await landing.getByRole('option', { name: 'Grade 5', exact: true }).waitFor({ state: 'attached' });
+    assert.equal(await landing.getByRole('option', { name: 'Grade 1', exact: true }).count(), 0);
+    assert.equal(await landing.locator('.site').getAttribute('dir'), 'rtl');
+
+    await success(await api(visitor, '/auth/activate', 'POST', { groupId: group.id, gradeId: fourth.id, studentId: student.id, pin: '012345', activationCode }));
+    await landing.reload();
+    await landing.getByRole('link', { name: 'لوحة ترتيب المسابقة' }).waitFor();
+    await landing.getByRole('button', { name: 'تأكيد وبدء' }).click();
+    await landing.getByRole('heading', { name: question.text, exact: true }).waitFor();
+    assert.equal(await landing.getByLabel('الوقت المتبقي').count(), 0);
+    assert.match(await landing.locator('.quiz-clock').innerText(), /تنتهي/);
+
+    const publicSession = await context(engine);
+    const board = await publicSession.newPage();
+    await board.goto('/leaderboards/' + id);
+    await board.getByText('Provisional', { exact: true }).waitFor();
+    await board.getByText('No completed attempts yet.', { exact: true }).waitFor();
+    const attempt = (await (await success(await api(visitor, '/student/competitions/' + id))).json()).attemptId;
+    await success(await api(visitor, '/attempts/' + attempt + '/answers', 'POST', { questionId: question.id, itemIds: [items[0].id], advance: true, revision: 1 }));
+    await success(await api(visitor, '/attempts/' + attempt + '/submit', 'POST', {}));
+    await board.getByText(student.fullName, { exact: true }).waitFor({ timeout: 20000 });
+
+    await staffPage.getByRole('button', { name: 'Edit competition', exact: true }).click();
+    await staffPage.getByText(question.text, { exact: true }).click();
+    await staffPage.getByRole('radio', { name: items[1].text }).check();
+    await staffPage.getByRole('button', { name: 'Save competition', exact: true }).click();
+    await staffPage.getByText(/rescore 1 completed attempts/).waitFor();
+    await staffPage.getByRole('button', { name: 'Confirm and rescore', exact: true }).click();
+    await staffPage.getByRole('button', { name: 'Edit competition', exact: true }).waitFor();
+    const corrected = await (await success(await api(publicSession, '/leaderboards/' + id))).json();
+    assert.equal(corrected.boards[0].rows[0].score, 0);
+
+    await success(await groupApi('/admin/leaderboards/all', 'PUT', { published: true }));
+    await board.goto('/leaderboards/all/' + group.id);
+    await board.getByText(student.fullName, { exact: true }).waitFor();
+    assert.equal(await board.getByRole('link', { name: 'Back to the competition site' }).getAttribute('href'), '/groups/' + group.id);
+    await success(await groupApi(boardAdmin + '/unpublish', 'POST', {}));
+    await board.getByText('No completed attempts yet.', { exact: true }).waitFor({ timeout: 20000 });
+  } finally {
+    await engine.close();
+  }
+});

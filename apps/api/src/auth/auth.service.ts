@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import type { Request } from 'express';
 import { Database } from '../database/database.module';
 import { checkPassword, digest, hashPassword, randomToken } from './credentials';
-import { audit, Principal } from './principal';
+import { audit, DEFAULT_GROUP_ID, Principal } from './principal';
 
 export const cookieName = 'sid';
 
@@ -13,7 +13,7 @@ export function sessionToken(req: Request) {
   return token && /^[A-Za-z0-9_-]{43}$/.test(token) ? token : undefined;
 }
 
-type StudentLogin = { gradeId: string; studentId: string; pin: string; activationCode?: string };
+type StudentLogin = { gradeId: string; groupId?: string; studentId: string; pin: string; activationCode?: string };
 type StaffLogin = { username: string; password: string };
 type StaffSetup = StaffLogin & { setupCode: string };
 
@@ -40,8 +40,8 @@ export class AuthService {
     await this.throttle('student-ip', ip, 180, 60);
     const throttleScope = input.activationCode === undefined ? 'student-login' : 'student-activation';
     await this.throttle(throttleScope, input.studentId, 8, 600);
-    const where = { id: input.studentId, gradeId: input.gradeId };
-    const student = await this.db.student.findFirst({ where });
+    const where = { id: input.studentId, gradeId: input.gradeId, grade: { groupId: input.groupId ?? DEFAULT_GROUP_ID } };
+    const student = await this.db.student.findFirst({ where, include: { grade: { select: { groupId: true } } } });
     const invalid = () => new UnauthorizedException('Invalid credentials');
     if (input.activationCode !== undefined) {
       if (student?.status !== 'PENDING_ACTIVATION' ||
@@ -54,7 +54,7 @@ export class AuthService {
           data: { status: 'ACTIVE', pinHash, activationCodeHash: null, activationCodeUsedAt: new Date() },
         });
         if (consumed.count !== 1) throw invalid();
-        const principal = this.studentPrincipal(await tx.student.findUniqueOrThrow({ where }));
+        const principal = this.studentPrincipal(await tx.student.findUniqueOrThrow({ where, include: { grade: { select: { groupId: true } } } }));
         const session = await this.rotate(tx, principal);
         await audit(tx, principal, 'STUDENT_ACTIVATED', { gradeId: principal.gradeId });
         return session;
@@ -66,7 +66,7 @@ export class AuthService {
     }
     return this.db.$transaction(async (tx) => {
       await tx.$queryRaw`SELECT id FROM "Student" WHERE id = ${input.studentId}::uuid FOR UPDATE`;
-      const current = await tx.student.findFirst({ where });
+      const current = await tx.student.findFirst({ where, include: { grade: { select: { groupId: true } } } });
       if (current?.status !== 'ACTIVE' || current.pinHash !== student?.pinHash) throw invalid();
       return this.rotate(tx, this.studentPrincipal(current));
     });
@@ -85,7 +85,7 @@ export class AuthService {
       await tx.$queryRaw`SELECT id FROM "AdminUser" WHERE username = ${input.username} FOR UPDATE`;
       const current = await tx.adminUser.findUnique({ where });
       if (current?.status !== 'ACTIVE' || current.passwordHash !== staff?.passwordHash) throw invalid();
-      return this.rotate(tx, { id: current.id, role: current.role, displayName: current.fullName });
+      return this.rotate(tx, { id: current.id, role: current.role, displayName: current.fullName, groupId: current.groupId });
     });
   }
 
@@ -110,15 +110,15 @@ export class AuthService {
       });
       if (consumed.count !== 1) throw invalid();
       const staff = await tx.adminUser.findUniqueOrThrow({ where: { id: eligible.id } });
-      const principal = { id: staff.id, role: staff.role, displayName: staff.fullName };
+      const principal = { id: staff.id, role: staff.role, displayName: staff.fullName, groupId: staff.groupId };
       const session = await this.rotate(tx, principal);
       await audit(tx, principal, 'SERVANT_CREDENTIAL_SET', {});
       return session;
     });
   }
 
-  private studentPrincipal(student: { id: string; gradeId: string; fullName: string }) {
-    return { id: student.id, gradeId: student.gradeId, displayName: student.fullName, role: 'STUDENT' as const };
+  private studentPrincipal(student: { id: string; gradeId: string; fullName: string; grade: { groupId: string } }) {
+    return { id: student.id, gradeId: student.gradeId, groupId: student.grade.groupId, displayName: student.fullName, role: 'STUDENT' as const };
   }
 
   private async rotate(tx: Prisma.TransactionClient, principal: Principal) {
@@ -136,13 +136,13 @@ export class AuthService {
     const session = await this.db.session.findUnique({
       where: { tokenHash: digest(token), expiresAt: { gt: new Date() }, revokedAt: null },
       select: {
-        student: { select: { id: true, fullName: true, status: true, gradeId: true } },
-        staff: { select: { id: true, fullName: true, status: true, role: true } },
+        student: { select: { id: true, fullName: true, status: true, gradeId: true, grade: { select: { groupId: true } } } },
+        staff: { select: { id: true, fullName: true, status: true, role: true, groupId: true } },
       },
     });
     if (session?.student?.status === 'ACTIVE') return this.studentPrincipal(session.student);
     if (session?.staff?.status === 'ACTIVE') {
-      return { id: session.staff.id, role: session.staff.role, displayName: session.staff.fullName };
+      return { id: session.staff.id, role: session.staff.role, displayName: session.staff.fullName, groupId: session.staff.groupId };
     }
   }
 
@@ -151,15 +151,26 @@ export class AuthService {
     await this.db.session.updateMany({ where: { tokenHash: digest(token), revokedAt: null }, data: { revokedAt: new Date() } });
   }
 
-  async grades(ip: string) {
-    await this.throttle('roster', ip, 240, 60);
-    return this.db.grade.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
+  groupExists(id: string) {
+    return this.db.competitionGroup.count({ where: { id } });
   }
 
-  async roster(gradeId: string, ip: string) {
+  async grades(ip: string, groupId = DEFAULT_GROUP_ID) {
+    await this.throttle('roster', ip, 240, 60);
+    return this.db.grade.findMany({ where: { groupId }, select: { id: true, name: true }, orderBy: { name: 'asc' } });
+  }
+
+  async competitionEntry(id: string) {
+    const competition = await this.db.competition.findFirst({
+      where: { id, status: { not: 'DRAFT' } }, select: { groupId: true },
+    });
+    return { groupId: competition?.groupId ?? null };
+  }
+
+  async roster(gradeId: string, ip: string, groupId = DEFAULT_GROUP_ID) {
     await this.throttle('roster', ip, 240, 60);
     return this.db.student.findMany({
-      where: { gradeId, status: { not: 'SUSPENDED' } },
+      where: { gradeId, grade: { groupId }, status: { not: 'SUSPENDED' } },
       select: { id: true, displayLabel: true },
       orderBy: { displayLabel: 'asc' },
     });

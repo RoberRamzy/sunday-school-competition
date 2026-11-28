@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ApiError, api, errorText, json, type Grade, type Language, type Principal, type Translate } from "../api";
+import { ApiError, api, errorText, groupGradeQuery, groupHome, json, overallBoardPath, type Grade, type Language, type Principal, type Translate } from "../api";
 import { displayDate, statusText, type Attempt, type StudentCompetition } from "../competition";
 import { Icon } from "./ui-icon";
 import { useQuietQuiz } from "./christmas-effects";
@@ -18,6 +18,8 @@ export function Student({ principal, language, t, competitionId }: {
   principal: Principal; language: Language; t: Translate; competitionId?: string;
 }) {
   const router = useRouter();
+  const home = groupHome(principal.groupId);
+  const overallPath = overallBoardPath(principal.groupId);
   const [competitions, setCompetitions] = useState<StudentCompetition[] | null>(null);
   const [grade, setGrade] = useState("");
   const [selected, setSelected] = useState<StudentCompetition | null>(null);
@@ -39,13 +41,13 @@ export function Student({ principal, language, t, competitionId }: {
   useEffect(() => {
     void refresh();
     const controller = new AbortController();
-    api<Grade[]>("/auth/grades", { signal: controller.signal }).then((grades) => {
+    api<Grade[]>(`/auth/grades${groupGradeQuery(principal.groupId)}`, { signal: controller.signal }).then((grades) => {
       setGrade(grades.find((item) => item.id === principal.gradeId)?.name ?? "");
     }).catch(() => {});
-    if (!competitionId) api<{ published: boolean }>("/leaderboards/all/visibility", { signal: controller.signal })
+    if (!competitionId) api<{ published: boolean }>(`${overallPath}/visibility`, { signal: controller.signal })
       .then(({ published }) => setOverallPublic(published)).catch(() => {});
     return () => controller.abort();
-  }, [competitionId, principal.gradeId, refresh]);
+  }, [competitionId, overallPath, principal.gradeId, principal.groupId, refresh]);
 
   async function open(competition: StudentCompetition) {
     setBusy(true);
@@ -78,7 +80,7 @@ export function Student({ principal, language, t, competitionId }: {
   }
 
   if (attempt) return <Quiz key={attempt.id} firstState={attempt} t={t} language={language} onExit={() => {
-    if (competitionId) router.push("/");
+    if (competitionId) router.push(home);
     else { setAttempt(null); void refresh(); }
   }}/>;
 
@@ -91,23 +93,23 @@ export function Student({ principal, language, t, competitionId }: {
       </span>
     </div>
     <p className="subtle">{t("Welcome,", "مرحبًا،")} <bdi>{principal.displayName}</bdi>{grade && <> · <bdi>{grade}</bdi></>}</p>
-    {!competitionId && overallPublic && <Link className="link-button" href="/leaderboards/all" prefetch={false}>{t("Across-competition leaderboard", "لوحة ترتيب جميع المسابقات")}</Link>}
+    {!competitionId && overallPublic && <Link className="link-button" href={overallPath} prefetch={false}>{t("Across-competition leaderboard", "لوحة ترتيب جميع المسابقات")}</Link>}
     {error ? <p className="notice error section-description" role="alert">{errorText(error, t)}{" "}{competitions === null && <button className="link-button" type="button" onClick={refresh}>{t("Try again", "حاول مجددًا")}</button>}</p> : null}
     {selected ? <section className="panel student-detail">
       <div className="card-heading"><h2 dir="auto">{selected.title}</h2><span className="status">{statusText(selected.attemptStatus ?? selected.status, t)}</span></div>
       <CompetitionDates competition={selected} language={language} t={t}/>
       {selected.description && <p dir="auto">{selected.description}</p>}
       <p className="preserve-lines" dir="auto">{selected.instructions}</p>
-      {selected.status === "ACTIVE" && !completed(selected) && selected.attemptStatus !== "IN_PROGRESS" && <p className="subtle">{t("You have one attempt. When you go to the next question, your previous answer is locked. Your attempt ends at the time limit or when the competition closes, whichever comes first.", "لديك محاولة واحدة. عند الانتقال إلى السؤال التالي يُقفل جوابك السابق. تنتهي المحاولة عند انتهاء الوقت المحدد أو إغلاق المسابقة، أيهما أقرب.")}</p>}
+      {selected.status === "ACTIVE" && !completed(selected) && selected.attemptStatus !== "IN_PROGRESS" && <p className="subtle">{selected.timerEnabled === false ? t("You have one attempt. Moving to the next question locks your previous answer. Your attempt ends when the competition closes.", "لديك محاولة واحدة. عند الانتقال إلى السؤال التالي يُقفل جوابك السابق. تنتهي محاولتك عند إغلاق المسابقة.") : t("You have one attempt. When you go to the next question, your previous answer is locked. Your attempt ends at the time limit or when the competition closes, whichever comes first.", "لديك محاولة واحدة. عند الانتقال إلى السؤال التالي يُقفل جوابك السابق. تنتهي المحاولة عند انتهاء الوقت المحدد أو إغلاق المسابقة، أيهما أقرب.")}</p>}
       <CompetitionResult competition={selected} t={t}/>
       <div className="record-actions">
         {selected.attemptStatus === "IN_PROGRESS" ? <button type="button" className="button primary" onClick={() => open(selected)} disabled={busy}>{t("Continue attempt", "متابعة المحاولة")}</button>
           : selected.status === "ACTIVE" && !completed(selected) && <button type="button" className="button primary" onClick={start} disabled={busy}>{t("Confirm and start", "تأكيد وبدء")}</button>}
-        {competitionId ? <Link className="button" href="/">{t("Back to competitions", "العودة إلى المسابقات")}</Link>
+        {competitionId ? <Link className="button" href={home}>{t("Back to competitions", "العودة إلى المسابقات")}</Link>
           : <button type="button" className="button" disabled={busy} onClick={() => setSelected(null)}>{t("Back to competitions", "العودة إلى المسابقات")}</button>}
       </div>
     </section>
-    : competitionId ? error ? <Link className="button" href="/">{t("Back to competitions", "العودة إلى المسابقات")}</Link>
+    : competitionId ? error ? <Link className="button" href={home}>{t("Back to competitions", "العودة إلى المسابقات")}</Link>
       : <p role="status" className="panel">{t("Loading competition…", "جارٍ تحميل المسابقة…")}</p>
     : competitions === null ? !error && <p role="status" className="panel">{t("Loading competitions…", "جارٍ تحميل المسابقات…")}</p>
     : competitions.length === 0 ? <p className="panel subtle">{t("There are no competitions for your grade yet.", "لا توجد مسابقات لصفك بعد.")}</p>
@@ -129,7 +131,7 @@ function CompetitionResult({ competition, t }: { competition: StudentCompetition
   return <>
     {competition.result ? <p className="notice success">{t(`Score ${competition.result.score} / ${competition.result.maxScore} · Rank ${competition.result.rank}`, `النتيجة ${competition.result.score} / ${competition.result.maxScore} · الترتيب ${competition.result.rank}`)}</p>
       : completed(competition) && <p className="note">{t("Results will appear here when they are published.", "ستظهر النتائج هنا بعد نشرها.")}</p>}
-    {completed(competition) && competition.leaderboardPublished && <div><Link className="link-button" href={`/leaderboards/${competition.id}`} prefetch={false}>{t("Competition leaderboard", "لوحة ترتيب المسابقة")}</Link></div>}
+    {competition.leaderboardPublished && <div><Link className="link-button" href={`/leaderboards/${competition.id}`} prefetch={false}>{t("Competition leaderboard", "لوحة ترتيب المسابقة")}</Link></div>}
   </>;
 }
 
@@ -137,7 +139,7 @@ function CompetitionDates({ competition, language, t }: { competition: StudentCo
   return <div className="competition-facts">
     <span><Icon name="calendar" size={17}/>{t("Opens", "تبدأ")} <bdi>{displayDate(competition.opensAt, language)}</bdi></span>
     <span><Icon name="calendar" size={17}/>{t("Closes", "تنتهي")} <bdi>{displayDate(competition.closesAt, language)}</bdi></span>
-    <span><Icon name="clock" size={17}/>{t(`${competition.durationMinutes} min · ${competition.questionCount} questions`, `${competition.durationMinutes} دقيقة · ${competition.questionCount} سؤال`)}</span>
+    <span><Icon name="clock" size={17}/>{competition.timerEnabled === false ? t(`${competition.questionCount} questions`, `${competition.questionCount} سؤال`) : t(`${competition.durationMinutes} min · ${competition.questionCount} questions`, `${competition.durationMinutes} دقيقة · ${competition.questionCount} سؤال`)}</span>
   </div>;
 }
 
@@ -309,7 +311,9 @@ function Quiz({ firstState, t, language, onExit }: {
     <div className="quiz-top">
       <div><strong><span className="season-star"><Icon name="star" size={17}/></span>{question ? t(`Question ${attempt.index + 1} of ${attempt.total}`, `السؤال ${attempt.index + 1} من ${attempt.total}`) : t("Ready to submit", "جاهزة للتسليم")}</strong>
         <progress value={Math.min(attempt.index + 1, attempt.total)} max={attempt.total}/></div>
-      <div className="quiz-clock" data-low={remaining <= 60 || undefined}><Icon name="clock" size={19}/><span aria-label={t("Time remaining", "الوقت المتبقي")}><bdi>{timer}</bdi></span></div>
+      {attempt.timerEnabled === false
+        ? <div className="quiz-clock"><Icon name="clock" size={19}/><span>{t("Closes", "تنتهي")} <bdi>{displayDate(attempt.expiresAt, language)}</bdi></span></div>
+        : <div className="quiz-clock" data-low={remaining <= 60 || undefined}><Icon name="clock" size={19}/><span aria-label={t("Time remaining", "الوقت المتبقي")}><bdi>{timer}</bdi></span></div>}
     </div>
     <section className="panel quiz-panel">
       <h1 ref={heading} tabIndex={-1} dir="auto">{question?.text ?? t("Submit your attempt", "سلّم محاولتك")}</h1>
@@ -342,7 +346,7 @@ function Quiz({ firstState, t, language, onExit }: {
           })}
         </ol>
       </>}
-      {remaining > 0 && remaining <= 60 && <p className="timer-warning" role="status">{t("Less than one minute remaining.", "تبقى أقل من دقيقة.")}</p>}
+      {attempt.timerEnabled !== false && remaining > 0 && remaining <= 60 && <p className="timer-warning" role="status">{t("Less than one minute remaining.", "تبقى أقل من دقيقة.")}</p>}
       <p className="note" role="status">{offline ? t("You’re offline. Keep this tab open to reconnect.", "الاتصال منقطع. أبقِ هذه الصفحة مفتوحة لإعادة الاتصال.")
         : remaining === 0 ? t("Checking the deadline with the server…", "جارٍ التحقق من انتهاء الوقت…")
         : sync === "saving" ? t("Saving…", "جارٍ الحفظ…")

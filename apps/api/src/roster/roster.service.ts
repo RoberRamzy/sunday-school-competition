@@ -3,7 +3,7 @@ import { Prisma } from '@prisma/client';
 import { Workbook } from 'exceljs';
 import { z } from 'zod';
 import { digest, randomToken } from '../auth/credentials';
-import { audit, gradeScope, lockStaff, requireGrade, StaffPrincipal } from '../auth/principal';
+import { audit, gradeScope, groupOf, lockStaff, requireGrade, StaffPrincipal } from '../auth/principal';
 import { Database, isDatabaseError } from '../database/database.module';
 import { servantInput, servantPatch, studentImport, studentInput, studentPatch } from './roster.input';
 
@@ -26,10 +26,28 @@ function servantSetupCode() {
 export class RosterService {
   constructor(private readonly db: Database) {}
 
+  groups() {
+    return this.db.competitionGroup.findMany({ select: { id: true, name: true }, orderBy: { name: 'asc' } });
+  }
+
+  async createGroup(actor: StaffPrincipal, name: string) {
+    try {
+      return await this.db.$transaction(async tx => {
+        await lockStaff(tx, actor);
+        const group = await tx.competitionGroup.create({ data: { name } });
+        await audit(tx, actor, 'COMPETITION_GROUP_CREATED', { groupId: group.id });
+        return group;
+      });
+    } catch (error) {
+      if (isDatabaseError(error, 'P2002')) throw new ConflictException('A competition group already has this name');
+      throw error;
+    }
+  }
+
   async grades(actor: StaffPrincipal) {
     const ids = await gradeScope(this.db, actor);
     return this.db.grade.findMany({
-      where: { id: ids ? { in: ids } : undefined },
+      where: { groupId: groupOf(actor), id: ids ? { in: ids } : undefined },
       select: { id: true, name: true },
       orderBy: { name: 'asc' },
     });
@@ -40,8 +58,8 @@ export class RosterService {
       return await this.db.$transaction(async (tx) => {
         await lockStaff(tx, actor);
         const grade = id
-          ? await tx.grade.update({ where: { id }, data: { name }, select: { id: true, name: true } })
-          : await tx.grade.create({ data: { name }, select: { id: true, name: true } });
+          ? await tx.grade.update({ where: { id, groupId: groupOf(actor) }, data: { name }, select: { id: true, name: true } })
+          : await tx.grade.create({ data: { name, groupId: groupOf(actor) }, select: { id: true, name: true } });
         await audit(tx, actor, id ? 'GRADE_UPDATED' : 'GRADE_CREATED', { gradeId: grade.id });
         return grade;
       });
@@ -54,9 +72,9 @@ export class RosterService {
 
   async students(actor: StaffPrincipal, gradeId?: string) {
     const scope = await gradeScope(this.db, actor);
-    if (gradeId && scope && !scope.includes(gradeId)) throw new ForbiddenException();
+    if (gradeId) await requireGrade(this.db, actor, gradeId);
     return this.db.student.findMany({
-      where: { gradeId: gradeId || (scope ? { in: scope } : undefined) },
+      where: { grade: { groupId: groupOf(actor) }, gradeId: gradeId || (scope ? { in: scope } : undefined) },
       select: studentFields,
       orderBy: [{ fullName: 'asc' }, { displayLabel: 'asc' }],
     });
@@ -206,9 +224,9 @@ export class RosterService {
     });
   }
 
-  async servants() {
+  async servants(actor: StaffPrincipal) {
     const users = await this.db.adminUser.findMany({
-      where: { role: 'SERVANT' }, select: servantFields, orderBy: { username: 'asc' },
+      where: { role: 'SERVANT', groupId: groupOf(actor) }, select: servantFields, orderBy: { username: 'asc' },
     });
     return users.map(mapServant);
   }
@@ -220,10 +238,14 @@ export class RosterService {
     try {
       return await this.db.$transaction(async (tx) => {
         await lockStaff(tx, actor);
+        const groupId = groupOf(actor);
+        if (gradeIds && await tx.grade.count({ where: { id: { in: gradeIds }, groupId } }) !== new Set(gradeIds).size) {
+          throw new ForbiddenException('Grade is outside this competition group');
+        }
         const setup = id ? undefined : servantSetupCode();
         const servant = id
           ? await tx.adminUser.update({
-              where: { id, role: 'SERVANT' },
+              where: { id, role: 'SERVANT', groupId },
               data: {
                 ...fields,
                 ...(suspended ? { setupCodeHash: null, setupCodeExpiresAt: null } : {}),
@@ -232,7 +254,7 @@ export class RosterService {
               select: servantFields,
             })
           : await tx.adminUser.create({
-              data: { fullName: fields.fullName!, username: fields.username!, ...setup!.data, grades: { create: assignments } },
+              data: { groupId, fullName: fields.fullName!, username: fields.username!, ...setup!.data, grades: { create: assignments } },
               select: servantFields,
             });
         if (servant.status === 'SUSPENDED') {
@@ -257,7 +279,7 @@ export class RosterService {
         await lockStaff(tx, actor);
         const setup = servantSetupCode();
         const { username } = await tx.adminUser.update({
-          where: { id, role: 'SERVANT', status: 'ACTIVE' },
+          where: { id, role: 'SERVANT', status: 'ACTIVE', groupId: groupOf(actor) },
           data: { ...setup.data, passwordHash: null },
           select: { username: true },
         });

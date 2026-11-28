@@ -1,6 +1,6 @@
 import { ConflictException, ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Prisma } from '@prisma/client';
-import { audit, lockStaff, requireGrade } from '../auth/principal';
+import { audit, groupOf, lockStaff, requireGrade } from '../auth/principal';
 import type { StaffPrincipal } from '../auth/principal';
 import { Database } from '../database/database.module';
 import { lockCompetition } from './attempt.service';
@@ -81,8 +81,9 @@ export class DeletionService {
     }, { timeout: 30000 });
   }
 
-  staffList() {
+  staffList(actor: StaffPrincipal) {
     return this.db.adminUser.findMany({
+      where: { OR: [{ role: 'SUPER_ADMIN' }, { groupId: groupOf(actor) }] },
       select: { id: true, fullName: true, username: true, role: true, status: true },
       orderBy: [{ role: 'asc' }, { username: 'asc' }],
     });
@@ -95,8 +96,8 @@ export class DeletionService {
         SELECT id FROM "AdminUser" WHERE id IN (${actor.id}::uuid, ${id}::uuid) ORDER BY id FOR UPDATE
       `;
       await lockStaff(tx, actor);
-      const target = await tx.adminUser.findUnique({ where: { id }, select: { role: true } });
-      if (!target) throw new NotFoundException('Staff account was not found');
+      const target = await tx.adminUser.findUnique({ where: { id }, select: { role: true, groupId: true } });
+      if (!target || (target.role !== 'SUPER_ADMIN' && target.groupId !== groupOf(actor))) throw new NotFoundException('Staff account was not found');
       if (target.role === 'SUPER_ADMIN' && !(await tx.adminUser.count({
         where: { id: { not: id }, role: 'SUPER_ADMIN', status: 'ACTIVE' },
       }))) throw new ConflictException('Keep at least one active super admin');

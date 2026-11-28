@@ -26,13 +26,16 @@ export const competitionInput = z.strictObject({
   tiePolicy: z.enum(['SCORE_THEN_TIME', 'SCORE_ONLY']).optional(),
   instructions: z.string().trim().max(8000),
   opensAt: z.iso.datetime(), closesAt: z.iso.datetime(),
+  timerEnabled: z.boolean().optional(),
   durationMinutes: z.number().int().min(1).max(1440),
   grades: z.array(gradeSetup).min(1).max(50).optional(),
   gradeIds: z.array(z.uuid()).min(1).max(50).optional(),
   questions: z.array(ownedQuestionInput).max(100).optional(),
 });
 export const sharedCompetitionInput = competitionInput.omit({ grades: true }).required({ gradeIds: true, questions: true });
-export const competitionPatch = competitionInput.partial();
+export const competitionPatch = competitionInput.partial().extend({
+  answerKeys: z.array(z.strictObject({ questionId: z.uuid(), correctOrder: z.array(z.uuid()).min(1).max(30) })).min(1).max(100).optional(),
+});
 export const answerInput = z.strictObject({
   questionId: z.uuid(), itemIds: z.array(z.uuid()).max(30), advance: z.boolean(), revision: z.number().int().min(1).max(2147483647),
 });

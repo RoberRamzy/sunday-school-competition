@@ -4,12 +4,12 @@ import { Prisma } from '@prisma/client';
 import type { Competition } from '@prisma/client';
 import { createHash, createHmac } from 'node:crypto';
 import { z } from 'zod';
-import { Actor, audit, lockStaff, Public, Roles } from '../auth/principal';
+import { Actor, audit, DEFAULT_GROUP_ID, groupOf, lockStaff, Public, Roles } from '../auth/principal';
 import type { StaffPrincipal } from '../auth/principal';
 import { Database } from '../database/database.module';
 import { body, bodyDocs, param } from '../system/input';
 import { AttemptService, lockCompetition } from './attempt.service';
-import { databaseTime, effectiveStatus, gradeSelections } from './competition-data';
+import { databaseTime, effectiveStatus, gradeSelections, requireCompetitionManagement } from './competition-data';
 import { snapshotInput } from './competition.input';
 import { denseRanking } from './ranking';
 
@@ -82,8 +82,11 @@ export class LeaderboardService {
         })),
     }));
     const publicBoards = boards.filter(board => competition.leaderboardScopes.includes(board.scope));
-    const publication = { title: competition.title, boards: publicBoards };
-    const revision = createHash('sha256').update(JSON.stringify([tiePolicy, publication])).digest('hex');
+    const publication = { title: competition.title, boards: publicBoards, provisional: !competition.publishedAt };
+    const config = [competition.id, competition.title, tiePolicy, competition.leaderboardScopes, overallAvailable];
+    const revision = createHash('sha256').update(JSON.stringify([
+      config, effectiveStatus(competition, now) === 'ACTIVE' ? null : publication,
+    ])).digest('hex');
     return { overallAvailable, tiePolicy, boards, scopes: competition.leaderboardScopes,
       publication, revision,
       published: competition.publicLeaderboard !== null, status: effectiveStatus(competition, now) };
@@ -94,6 +97,7 @@ export class LeaderboardService {
     return this.db.$transaction(async tx => {
       await lockStaff(tx, actor);
       const competition = await lockCompetition(tx, id, true);
+      await requireCompetitionManagement(tx, actor, id);
       const now = await databaseTime(tx);
       await this.attempts.reconcileScope(tx, { competitionId: id }, now);
       return operation(tx, competition, now);
@@ -102,11 +106,9 @@ export class LeaderboardService {
 
   preview(actor: StaffPrincipal, id: string) {
     return this.transaction(actor, id, async (tx, competition, now) => {
-      const view = await this.view(tx, competition, now);
-      const publication = competition.publicLeaderboard
-        ? await this.readPublication(tx, competition)
-        : view.publication;
-      return { ...view, publication };
+      const standings = await this.view(tx, competition, now);
+      const legacy = await this.readPublication(tx, competition);
+      return legacy ? { ...standings, publication: { ...legacy, provisional: standings.publication.provisional } } : standings;
     });
   }
 
@@ -130,7 +132,7 @@ export class LeaderboardService {
     return this.transaction(actor, id, async (tx, competition, now) => {
       const view = await this.view(tx, competition, now);
       if (view.published) throw new ConflictException('Unpublish before replacing published boards');
-      if (!['CLOSED', 'ARCHIVED'].includes(view.status)) throw new ConflictException('Close the competition first');
+      if (!['ACTIVE', 'CLOSED', 'ARCHIVED'].includes(view.status)) throw new ConflictException('Open or close the competition before publishing');
       if (!view.publication.boards.length) throw new BadRequestException('Choose at least one board to publish');
       if (view.revision !== revision) throw new ConflictException('Standings changed. Refresh and review the public preview');
       await tx.competition.update({ where: { id }, data: { publicLeaderboard: view.publication } });
@@ -158,18 +160,18 @@ export class LeaderboardService {
 
   private async readPublication(tx: Prisma.TransactionClient,
     competition: Pick<Competition, 'id' | 'publicLeaderboard' | 'leaderboardAliasKey'>) {
-    const publication = savedPublication.parse(competition.publicLeaderboard);
+    const parsed = savedPublication.safeParse(competition.publicLeaderboard);
+    if (!parsed.success || !parsed.data.boards.some(board => board.rows.some(row => 'alias' in row))) return null;
+    const publication = parsed.data;
     const names = new Map<string, string>();
-    if (publication.boards.some(board => board.rows.some(row => 'alias' in row))) {
-      // Resolve older published snapshots without recomputing their frozen ranks or scores.
-      const attempts = await tx.attempt.findMany({
-        where: { competitionId: competition.id },
-        distinct: ['studentId'],
-        select: { studentId: true, student: { select: { fullName: true } } },
-      });
-      for (const { studentId, student } of attempts) {
-        names.set(legacyAlias(competition.leaderboardAliasKey, studentId), student.fullName);
-      }
+    // Resolve historical aliases until a score-changing operation refreshes the snapshot.
+    const attempts = await tx.attempt.findMany({
+      where: { competitionId: competition.id },
+      distinct: ['studentId'],
+      select: { studentId: true, student: { select: { fullName: true } } },
+    });
+    for (const { studentId, student } of attempts) {
+      names.set(legacyAlias(competition.leaderboardAliasKey, studentId), student.fullName);
     }
     return {
       ...publication,
@@ -187,67 +189,91 @@ export class LeaderboardService {
 
   publicBoard(id: string) {
     return this.db.$transaction(async tx => {
-      const competition = await tx.competition.findUnique({
-        where: { id }, select: { id: true, publicLeaderboard: true, leaderboardAliasKey: true },
-      });
-      if (!competition?.publicLeaderboard) throw new NotFoundException('Leaderboard is not published');
-      return this.readPublication(tx, competition);
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+      const competition = await lockCompetition(tx, id);
+      if (!competition.publicLeaderboard) throw new NotFoundException('Leaderboard is not published');
+      const now = await databaseTime(tx);
+      await this.attempts.reconcileScope(tx, { competitionId: id }, now);
+      const legacy = await this.readPublication(tx, competition);
+      if (legacy) return { ...legacy, provisional: !competition.publishedAt };
+      return (await this.view(tx, competition, now)).publication;
+    }, { timeout: 30000 });
   }
 
-  private async overallStandings(tx: Prisma.TransactionClient) {
+  private async overallStandings(tx: Prisma.TransactionClient, groupId: string) {
+    const now = await databaseTime(tx);
+    const overdue = await tx.attempt.findMany({
+      where: {
+        status: 'IN_PROGRESS', expiresAt: { lte: now }, competition: { groupId,
+          OR: [{ publishedAt: { not: null } }, { publicLeaderboard: { not: Prisma.DbNull } }],
+        },
+      },
+      select: { competitionId: true }, orderBy: { competitionId: 'asc' }, distinct: ['competitionId'],
+    });
+    for (const { competitionId } of overdue) {
+      await tx.$queryRaw`SELECT id FROM "Competition" WHERE id = ${competitionId}::uuid FOR SHARE`;
+      await this.attempts.reconcileScope(tx, { competitionId }, now);
+    }
     const rows = await tx.$queryRaw<{
-      rank: number; name: string; grade: string; score: number; maxScore: number; competitions: number;
+      rank: number; name: string; grade: string; score: number; maxScore: number; competitions: number; provisional: boolean;
     }[]>`
       WITH totals AS (
         SELECT a."studentId", SUM(a."score") AS score, SUM(a."maxScore") AS maximum,
-               COUNT(DISTINCT a."competitionId") AS competitions
+               SUM(EXTRACT(EPOCH FROM (a."finishedAt" - a."startedAt"))) AS elapsed,
+               COUNT(DISTINCT a."competitionId") AS competitions,
+               BOOL_OR(c."publishedAt" IS NULL) AS provisional
         FROM "Attempt" a
-        JOIN "Competition" c ON c.id = a."competitionId" AND c."publishedAt" IS NOT NULL
+        JOIN "Competition" c ON c.id = a."competitionId" AND c."groupId" = ${groupId}::uuid
         WHERE a.status IN ('SUBMITTED', 'TIMED_OUT')
+          AND (c."publishedAt" IS NOT NULL OR c."publicLeaderboard" IS NOT NULL)
         GROUP BY a."studentId"
       )
-      SELECT DENSE_RANK() OVER (ORDER BY t.score DESC)::integer AS rank,
+      SELECT DENSE_RANK() OVER (ORDER BY t.score DESC, t.elapsed ASC NULLS LAST)::integer AS rank,
              s."fullName" AS name, g.name AS grade, t.score::double precision AS score,
-             t.maximum::double precision AS "maxScore", t.competitions::integer AS competitions
+             t.maximum::double precision AS "maxScore", t.competitions::integer AS competitions, t.provisional
       FROM totals t
       JOIN "Student" s ON s.id = t."studentId"
-      JOIN "Grade" g ON g.id = s."gradeId"
-      ORDER BY t.score DESC, s."fullName", s.id
+      JOIN "Grade" g ON g.id = s."gradeId" AND g."groupId" = ${groupId}::uuid
+      ORDER BY t.score DESC, t.elapsed ASC NULLS LAST, s."fullName", s.id
     `;
-    return { title: 'Across-competition leaderboard', boards: [{ scope: 'overall', name: null, rows }] };
+    return {
+      title: 'Across-competition leaderboard', groupId, provisional: rows.some(row => row.provisional),
+      boards: [{ scope: 'overall', name: null, rows: rows.map(({ provisional: _provisional, ...row }) => row) }],
+    };
   }
 
-  async overallPublished(tx: Prisma.TransactionClient = this.db) {
-    const setting = await tx.overallLeaderboard.findUnique({ where: { id: 1 } });
+  async overallPublished(groupId: string, tx: Prisma.TransactionClient = this.db) {
+    const setting = await tx.overallLeaderboard.findUnique({ where: { groupId } });
     return { published: setting?.published ?? false };
   }
 
   overallPreview(actor: StaffPrincipal) {
     return this.db.$transaction(async tx => {
       await lockStaff(tx, actor);
-      return { ...await this.overallPublished(tx), ...await this.overallStandings(tx) };
-    });
+      const groupId = groupOf(actor);
+      return { ...await this.overallPublished(groupId, tx), ...await this.overallStandings(tx, groupId) };
+    }, { timeout: 30000 });
   }
 
   setOverallVisibility(actor: StaffPrincipal, published: boolean) {
     return this.db.$transaction(async tx => {
       await lockStaff(tx, actor);
+      const groupId = groupOf(actor);
       await tx.overallLeaderboard.upsert({
-        where: { id: 1 }, create: { id: 1, published }, update: { published },
+        where: { groupId }, create: { groupId, published }, update: { published },
       });
       await audit(tx, actor, published ? 'OVERALL_LEADERBOARD_PUBLISHED' : 'OVERALL_LEADERBOARD_UNPUBLISHED', {});
-      return { published, ...await this.overallStandings(tx) };
-    });
+      return { published, ...await this.overallStandings(tx, groupId) };
+    }, { timeout: 30000 });
   }
 
-  overallPublic() {
+  overallPublic(groupId: string) {
     return this.db.$transaction(async tx => {
-      const { published } = await this.overallPublished(tx);
+      const { published } = await this.overallPublished(groupId, tx);
       if (!published) throw new NotFoundException('Leaderboard is not published');
-      return this.overallStandings(tx);
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead });
+      return this.overallStandings(tx, groupId);
+    }, { timeout: 30000 });
   }
+
 }
 
 @ApiTags('Leaderboards')
@@ -268,27 +294,27 @@ export class LeaderboardController {
     return this.boards.setOverallVisibility(actor, input.published);
   }
 
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SERVANT')
   @Get('admin/competitions/:id/leaderboard')
   preview(@Actor() actor: StaffPrincipal, @param('id') id: string) {
     return this.boards.preview(actor, id);
   }
 
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SERVANT')
   @Put('admin/competitions/:id/leaderboard')
   @bodyDocs(settings)
   configure(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(settings) input: Settings) {
     return this.boards.configure(actor, id, input);
   }
 
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SERVANT')
   @Post('admin/competitions/:id/leaderboard/publish')
   @bodyDocs(revisionInput)
   publish(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(revisionInput) input: z.infer<typeof revisionInput>) {
     return this.boards.publish(actor, id, input.revision);
   }
 
-  @Roles('SUPER_ADMIN')
+  @Roles('SUPER_ADMIN', 'SERVANT')
   @Post('admin/competitions/:id/leaderboard/unpublish')
   unpublish(@Actor() actor: StaffPrincipal, @param('id') id: string) {
     return this.boards.unpublish(actor, id);
@@ -297,13 +323,25 @@ export class LeaderboardController {
   @Public()
   @Get('leaderboards/all/visibility')
   overallVisibility() {
-    return this.boards.overallPublished();
+    return this.boards.overallPublished(DEFAULT_GROUP_ID);
   }
 
   @Public()
   @Get('leaderboards/all')
   overallPublic() {
-    return this.boards.overallPublic();
+    return this.boards.overallPublic(DEFAULT_GROUP_ID);
+  }
+
+  @Public()
+  @Get('leaderboards/all/:groupId/visibility')
+  groupOverallVisibility(@param('groupId') groupId: string) {
+    return this.boards.overallPublished(groupId);
+  }
+
+  @Public()
+  @Get('leaderboards/all/:groupId')
+  groupOverallPublic(@param('groupId') groupId: string) {
+    return this.boards.overallPublic(groupId);
   }
 
   @Public()

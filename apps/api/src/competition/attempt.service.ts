@@ -2,7 +2,7 @@ import { BadRequestException, ConflictException, ForbiddenException, Injectable,
 import { Attempt, Competition, Prisma } from '@prisma/client';
 import { randomInt } from 'node:crypto';
 import type { z } from 'zod';
-import { audit, lockStaff, requireGrade, StaffPrincipal } from '../auth/principal';
+import { audit, groupOf, lockStaff, requireGrade, StaffPrincipal } from '../auth/principal';
 import type { Principal } from '../auth/principal';
 import { Database } from '../database/database.module';
 import { databaseTime, effectiveStatus } from './competition-data';
@@ -50,7 +50,8 @@ export class AttemptService {
   async start(actor: StudentPrincipal, competitionId: string) {
     return this.db.$transaction(async (tx) => {
       const student = await lockStudent(tx, actor.id);
-      const competition = await lockCompetition(tx, competitionId);
+      const competition = await lockCompetition(tx, competitionId, true);
+      if (competition.groupId !== groupOf(actor)) throw new NotFoundException('Competition was not found');
       const current = await tx.attempt.findFirst({
         where: { competitionId, studentId: actor.id, status: { not: 'INVALIDATED' } },
       });
@@ -67,10 +68,12 @@ export class AttemptService {
       });
       if (!grade) throw new ForbiddenException('Grade is not eligible');
       if (effectiveStatus(competition, now) !== 'ACTIVE') throw new ConflictException('Competition is outside its entry window');
+      if (!competition.hasStarted) await tx.competition.update({ where: { id: competitionId }, data: { hasStarted: true } });
       const snapshots = grade.questions.map((row) => snapshotInput.parse(row.snapshot));
       if (!snapshots.length) throw new ConflictException('Competition quiz is not configured');
-      const expiresAt = new Date(Math.min(now.getTime() + competition.durationMinutes * 60000, competition.closesAt.getTime()));
-      const data = { status: 'IN_PROGRESS' as const, startedAt: now, expiresAt, maxScore: snapshots.reduce((sum, row) => sum + row.points, 0) };
+      const { timerEnabled } = competition;
+      const expiresAt = timerEnabled ? new Date(Math.min(now.getTime() + competition.durationMinutes * 60000, competition.closesAt.getTime())) : competition.closesAt;
+      const data = { status: 'IN_PROGRESS' as const, startedAt: now, expiresAt, timerEnabled, maxScore: snapshots.reduce((sum, row) => sum + row.points, 0) };
       const started = attempt
         ? await tx.attempt.update({ where: { id: attempt.id }, data })
         : await tx.attempt.create({ data: { ...data, studentId: actor.id, competitionId, gradeId } });
@@ -165,17 +168,33 @@ export class AttemptService {
   }
 
   private async finish(tx: Tx, attempt: Attempt, status: 'SUBMITTED' | 'TIMED_OUT', now: Date) {
+    const finishedAt = status === 'SUBMITTED' ? now : attempt.expiresAt!;
     const questions = await tx.attemptQuestion.findMany({ where: { attemptId: attempt.id }, include: { answer: true } });
+    const { stats, scores } = this.score(questions, attempt.maxScore);
+    await this.saveEarnedPoints(tx, scores, finishedAt);
+    const final = await tx.attempt.update({ where: { id: attempt.id }, data: {
+      ...stats, status, finishedAt, submittedAt: status === 'SUBMITTED' ? now : undefined,
+    } });
+    await tx.auditLog.create({
+      data: {
+        actorType: status === 'SUBMITTED' ? 'STUDENT' : 'SYSTEM', actorId: attempt.studentId,
+        eventType: status === 'SUBMITTED' ? 'ATTEMPT_SUBMITTED' : 'ATTEMPT_TIMED_OUT',
+        metadataJson: { attemptId: attempt.id, competitionId: attempt.competitionId, finishedAt: finishedAt.toISOString(), processedAt: now.toISOString() },
+      },
+    });
+    return final;
+  }
+
+  private score(questions: Prisma.AttemptQuestionGetPayload<{ include: { answer: true } }>[], maxScore: number) {
     let cents = 0;
     let correctCount = 0;
     let incorrectCount = 0;
     let unansweredCount = 0;
-    const finishedAt = status === 'SUBMITTED' ? now : attempt.expiresAt!;
-    const scored: Prisma.Sql[] = [];
+    const scores: Prisma.Sql[] = [];
     for (const question of questions) {
       if (!question.answer?.itemIds.length) {
         unansweredCount++;
-        if (question.answer) scored.push(Prisma.sql`(${question.id}::uuid, 0::decimal)`);
+        if (question.answer) scores.push(Prisma.sql`(${question.id}::uuid, 0::decimal)`);
         continue;
       }
       const answer = question.answer;
@@ -189,32 +208,54 @@ export class AttemptService {
       // Integer cents, rounded half up per question before adding to the total.
       const earned = correct ? total : partial ? Math.floor((2 * total * matching + snapshot.items.length) / (2 * snapshot.items.length)) : 0;
       cents += earned;
-      scored.push(Prisma.sql`(${question.id}::uuid, ${(earned / 100).toFixed(2)}::decimal)`);
+      scores.push(Prisma.sql`(${question.id}::uuid, ${(earned / 100).toFixed(2)}::decimal)`);
     }
-    if (scored.length) {
+    return { scores, stats: {
+      correctCount, incorrectCount, unansweredCount, score: (cents / 100).toFixed(2),
+      percentage: (maxScore ? (cents / maxScore).toFixed(2) : 0),
+    } };
+  }
+
+  private async saveEarnedPoints(tx: Tx, scores: Prisma.Sql[], finishedAt?: Date) {
+    if (!scores.length) return;
+    const lockAnswers = finishedAt ? Prisma.sql`, "lockedAt" = COALESCE(answer."lockedAt", ${finishedAt})` : Prisma.empty;
+    await tx.$executeRaw`
+      UPDATE "AttemptAnswer" AS answer SET "earnedPoints" = scores.earned ${lockAnswers}
+      FROM (VALUES ${Prisma.join(scores)}) AS scores(id, earned)
+      WHERE answer."attemptQuestionId" = scores.id
+    `;
+  }
+
+  // The caller holds an exclusive competition lock throughout the correction.
+  async regrade(tx: Tx, competitionId: string) {
+    const where = { competitionId, status: { in: ['SUBMITTED', 'TIMED_OUT'] } } satisfies Prisma.AttemptWhereInput;
+    const batchSize = 25;
+    let offset = 0;
+    while (true) {
+      const attempts = await tx.attempt.findMany({
+        where, orderBy: { id: 'asc' }, skip: offset, take: batchSize,
+        select: { id: true, maxScore: true, questions: { include: { answer: true } } },
+      });
+      if (!attempts.length) return offset;
+      const counts: Prisma.Sql[] = [];
+      const earned: Prisma.Sql[] = [];
+      for (const attempt of attempts) {
+        const { stats, scores } = this.score(attempt.questions, attempt.maxScore);
+        counts.push(Prisma.sql`(${attempt.id}::uuid, ${stats.score}::decimal, ${stats.percentage}::decimal,
+          ${stats.correctCount}::integer, ${stats.incorrectCount}::integer, ${stats.unansweredCount}::integer)`);
+        earned.push(...scores);
+      }
+      await this.saveEarnedPoints(tx, earned);
       await tx.$executeRaw`
-        UPDATE "AttemptAnswer" AS answer
-        SET "earnedPoints" = scores.earned, "lockedAt" = COALESCE(answer."lockedAt", ${finishedAt})
-        FROM (VALUES ${Prisma.join(scored)}) AS scores(id, earned)
-        WHERE answer."attemptQuestionId" = scores.id
+        UPDATE "Attempt" AS a SET score = stats.score, percentage = stats.percentage,
+          "correctCount" = stats.correct, "incorrectCount" = stats.incorrect, "unansweredCount" = stats.unanswered,
+          "updatedAt" = clock_timestamp()
+        FROM (VALUES ${Prisma.join(counts)}) AS stats(id, score, percentage, correct, incorrect, unanswered)
+        WHERE a.id = stats.id
       `;
+      offset += attempts.length;
+      if (attempts.length < batchSize) return offset;
     }
-    const final = await tx.attempt.update({
-      where: { id: attempt.id },
-      data: {
-        status, finishedAt, submittedAt: status === 'SUBMITTED' ? now : undefined,
-        correctCount, incorrectCount, unansweredCount, score: (cents / 100).toFixed(2),
-        percentage: (attempt.maxScore ? (cents / attempt.maxScore).toFixed(2) : 0),
-      },
-    });
-    await tx.auditLog.create({
-      data: {
-        actorType: status === 'SUBMITTED' ? 'STUDENT' : 'SYSTEM', actorId: attempt.studentId,
-        eventType: status === 'SUBMITTED' ? 'ATTEMPT_SUBMITTED' : 'ATTEMPT_TIMED_OUT',
-        metadataJson: { attemptId: attempt.id, competitionId: attempt.competitionId, finishedAt: finishedAt.toISOString(), processedAt: now.toISOString() },
-      },
-    });
-    return final;
   }
 
   private async state(tx: Tx, attempt: Attempt, now: Date) {
@@ -228,7 +269,7 @@ export class AttemptService {
     const snapshot = row ? snapshotInput.parse(row.snapshot) : undefined;
     const items = snapshot ? new Map(snapshot.items.map((item) => [item.id, item])) : undefined;
     return {
-      id: attempt.id, competitionId: attempt.competitionId, status: attempt.status, expiresAt: attempt.expiresAt,
+      id: attempt.id, competitionId: attempt.competitionId, status: attempt.status, expiresAt: attempt.expiresAt, timerEnabled: attempt.timerEnabled,
       serverTime: now, index: attempt.position, total,
       question: row && snapshot && items
         ? { id: row.questionId, type: snapshot.type, text: snapshot.text, ...(snapshot.imageUrl ? { imageUrl: snapshot.imageUrl } : {}), items: row.itemOrder.map((id) => items.get(id)!) }
@@ -250,6 +291,7 @@ export class AttemptService {
       if (!basic) throw new NotFoundException('Attempt was not found');
       await requireGrade(tx, actor, basic.gradeId);
       const competition = await lockCompetition(tx, basic.competitionId, exclusive);
+      if (competition.groupId !== groupOf(actor)) throw new NotFoundException('Attempt was not found');
       const attempt = await lockAttempt(tx, id);
       const now = await databaseTime(tx);
       return handle(tx, await this.reconcile(tx, attempt, now), now, competition);
@@ -257,7 +299,9 @@ export class AttemptService {
   }
 
   async detail(actor: StaffPrincipal, id: string) {
-    return this.staffAttempt(actor, id, async (tx, attempt, _now, competition) => {
+    return this.staffAttempt(actor, id, async (tx, attempt, now, competition) => {
+      const canReplace = effectiveStatus(competition, now) === 'ACTIVE' && !attempt.replacesAttemptId &&
+        Boolean(attempt.startedAt) && attempt.status !== 'INVALIDATED';
       const events = await tx.auditLog.findMany({
         where: { OR: [
           { metadataJson: { path: ['attemptId'], equals: id } },
@@ -267,8 +311,8 @@ export class AttemptService {
         select: { id: true, actorType: true, actorId: true, eventType: true, metadataJson: true, createdAt: true },
       });
       const { score, percentage, correctCount, incorrectCount, unansweredCount, ...metadata } = attempt;
-      if (actor.role === 'SERVANT' && !competition.publishedAt) return { ...metadata, events };
-      return { ...metadata, score: Number(score), percentage: Number(percentage), correctCount, incorrectCount, unansweredCount, events };
+      if (actor.role === 'SERVANT' && !competition.publishedAt) return { ...metadata, events, canReplace };
+      return { ...metadata, score: Number(score), percentage: Number(percentage), correctCount, incorrectCount, unansweredCount, events, canReplace };
     });
   }
 

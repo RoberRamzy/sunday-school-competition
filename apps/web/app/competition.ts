@@ -6,11 +6,11 @@ export type Difficulty = "EASY" | "MEDIUM" | "HARD";
 export type Item = { id: string; text: string };
 export type Question = { id: string; type: QuestionType; text: string; items: Item[]; imageUrl?: string | null };
 export type Attempt = {
-  id: string; competitionId: string; status: AttemptStatus; expiresAt: string | null; serverTime: string;
+  id: string; competitionId: string; status: AttemptStatus; expiresAt: string | null; timerEnabled?: boolean; serverTime: string;
   index: number; total: number; question: Question | null; savedAnswer: string[] | null; revision: number;
 };
 export type StudentCompetition = {
-  id: string; title: string; description?: string; instructions: string; opensAt: string; closesAt: string; durationMinutes: number;
+  id: string; title: string; description?: string; instructions: string; opensAt: string; closesAt: string; durationMinutes: number; timerEnabled?: boolean;
   questionCount: number; status: string; attemptId: string | null; attemptStatus: AttemptStatus | null;
   leaderboardPublished: boolean;
   result: { score: number; maxScore: number; rank: number } | null;
@@ -22,9 +22,9 @@ export type CompetitionQuestion = Question & {
 export type Blueprint = { type: QuestionType; difficulty: Difficulty; count: number };
 export type CompetitionGrade = { gradeId: string; questionIds: string[]; blueprint: Blueprint[] };
 export type StaffCompetition = {
-  id: string; title: string; description?: string; instructions: string; opensAt: string; closesAt: string; durationMinutes: number;
+  id: string; title: string; description?: string; instructions: string; opensAt: string; closesAt: string; durationMinutes: number; timerEnabled?: boolean;
   sharedQuestions: boolean; questions?: CompetitionQuestion[]; legacyDraftSets?: { gradeId: string; questions: CompetitionQuestion[] }[];
-  canManage?: boolean;
+  canManage?: boolean; quizLocked?: boolean; completedAttempts?: number;
   status: string; publishedAt: string | null; grades: CompetitionGrade[]; tiePolicy?: "SCORE_THEN_TIME" | "SCORE_ONLY";
 };
 

@@ -3,11 +3,13 @@ import { ApiCookieAuth, ApiProduces, ApiTags } from '@nestjs/swagger';
 import { z } from 'zod';
 import { Actor, Roles } from '../auth/principal';
 import type { StaffPrincipal } from '../auth/principal';
-import { body, bodyDocs, empty, param, query } from '../system/input';
+import { body, bodyDocs, empty, name, param, query } from '../system/input';
 import {
   gradeInput, handoutInput, servantInput, servantPatch, studentFilter, studentImport, studentInput, studentPatch,
 } from './roster.input';
 import { RosterService } from './roster.service';
+
+const groupInput = z.strictObject({ name });
 
 @ApiCookieAuth('sid')
 @ApiTags('Roster and staff')
@@ -15,6 +17,19 @@ import { RosterService } from './roster.service';
 @Controller('admin')
 export class RosterController {
   constructor(private readonly roster: RosterService) {}
+
+  @Roles('SUPER_ADMIN')
+  @Get('groups')
+  groups() {
+    return this.roster.groups();
+  }
+
+  @Roles('SUPER_ADMIN')
+  @Post('groups')
+  @bodyDocs(groupInput)
+  createGroup(@Actor() actor: StaffPrincipal, @body(groupInput) input: z.infer<typeof groupInput>) {
+    return this.roster.createGroup(actor, input.name);
+  }
 
   @Get('grades')
   grades(@Actor() actor: StaffPrincipal) {
@@ -80,8 +95,8 @@ export class RosterController {
 
   @Get('servants')
   @Roles('SUPER_ADMIN')
-  servants() {
-    return this.roster.servants();
+  servants(@Actor() actor: StaffPrincipal) {
+    return this.roster.servants(actor);
   }
 
   @Post('servants')

@@ -47,7 +47,7 @@ test('regular staff import and delete a student and reach competition and overal
     await page.getByRole('button',{name:'Competitions',exact:true}).click();
     await page.getByRole('button',{name:'Create competition',exact:true}).click();
     await page.getByRole('checkbox',{name:grade.name,exact:true}).waitFor();
-    assert.equal(await page.getByRole('checkbox').count(),1);
+    assert.equal(await page.getByRole('group',{name:'Eligible grades'}).getByRole('checkbox').count(),1);
     await page.getByRole('button',{name:'Overall leaderboard',exact:true}).click();
     await page.getByRole('button',{name:'Publish overall leaderboard',exact:true}).waitFor();
     assert.equal(await page.getByRole('button',{name:'Staff and grades',exact:true}).count(),0);

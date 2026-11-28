@@ -1,7 +1,7 @@
 import { ForbiddenException, Injectable, NotFoundException } from '@nestjs/common';
 import { Attempt, Prisma, TiePolicy } from '@prisma/client';
 import { Workbook } from 'exceljs';
-import { gradeScope, lockStaff, StaffPrincipal } from '../auth/principal';
+import { gradeScope, groupOf, lockStaff, StaffPrincipal } from '../auth/principal';
 import { Database } from '../database/database.module';
 import { AttemptService, lockCompetition, lockStudent, StudentPrincipal } from './attempt.service';
 import { denseRanking } from './ranking';
@@ -41,6 +41,7 @@ export class ResultsService {
       await lockStaff(tx, actor);
       const scope = await gradeScope(tx, actor);
       const competition = await lockCompetition(tx, id);
+      if (competition.groupId !== groupOf(actor)) throw new NotFoundException('Competition was not found');
       const grades = await tx.competitionGrade.findMany({
         where: { competitionId: id, gradeId: scope ? { in: scope } : undefined }, select: { gradeId: true },
       });
@@ -115,7 +116,7 @@ export class ResultsService {
       const student = await lockStudent(tx, actor.id);
       const candidates = await tx.competition.findMany({
         where: {
-          id, status: { not: 'DRAFT' },
+          id, groupId: groupOf(actor), status: { not: 'DRAFT' },
           OR: [
             { status: { not: 'ARCHIVED' }, grades: { some: { gradeId: student.gradeId } } },
             { attempts: { some: { studentId: actor.id, status: { not: 'INVALIDATED' } } } },
@@ -144,9 +145,9 @@ export class ResultsService {
           const rank = ranks.get(attempt.id);
           if (rank !== undefined) result = { score: Number(attempt.score), maxScore: attempt.maxScore, rank };
         }
-        const { title, description, instructions, opensAt, closesAt, durationMinutes } = competition;
+        const { title, description, instructions, opensAt, closesAt, durationMinutes, timerEnabled } = competition;
         items.push({
-          id: competition.id, title, description, instructions, opensAt, closesAt, durationMinutes,
+          id: competition.id, title, description, instructions, opensAt, closesAt, durationMinutes, timerEnabled,
           questionCount: selection._count.questions, status: effectiveStatus(competition, now),
           attemptId: attempt?.id ?? null, attemptStatus: attempt?.status ?? null, result,
           leaderboardPublished: competition.publicLeaderboard !== null,

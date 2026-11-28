@@ -56,9 +56,21 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
     }
   }
 
-  function edit() {
+  async function edit() {
     setError(null);
-    setEditing(true);
+    if (!detail) {
+      setEditing(true);
+      return;
+    }
+    setBusy(true);
+    try {
+      setDetail(await api<StaffCompetition>(`/admin/competitions/${detail.id}`));
+      setEditing(true);
+    } catch (error) {
+      setError(error);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function copyCompetitionLink(id: string) {
@@ -93,7 +105,7 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
     archive: t("Archive competition", "أرشفة المسابقة"),
   };
   const actionHelp: Record<Action, string> = {
-    activate: t("Activation freezes the question set and scoring. Students can start when the competition opens.", "يثبّت التفعيل الأسئلة وطريقة التصحيح. يمكن للطلاب البدء عند فتح المسابقة."),
+    activate: t("Students can start when the competition opens. The question set locks after the first attempt starts.", "يمكن للطلاب البدء عند فتح المسابقة. تُقفل مجموعة الأسئلة بعد بدء أول محاولة."),
     close: t("Closing ends access and finalizes any outstanding attempts.", "يُنهي الإغلاق الوصول إلى المسابقة ويُتم المحاولات الجارية."),
     publish: t("Students and assigned servants will be able to view their results.", "سيتمكن الطلاب والخدام المعيّنون من الاطلاع على نتائجهم."),
     archive: t("Archiving takes the competition off the available list. Students who attempted it can still see its published results.", "تزيل الأرشفة المسابقة من قائمة المسابقات المتاحة. يمكن لمن شارك الاطلاع على نتائجه المنشورة."),
@@ -121,14 +133,14 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
         <div className="card-heading"><h2 dir="auto">{detail.title}</h2><span className="status" data-status={detail.status}>{statusText(detail.status, t)}</span></div>
         {detail.description && <p className="preserve-lines" dir="auto">{detail.description}</p>}
         {detail.instructions && <p className="preserve-lines subtle" dir="auto">{detail.instructions}</p>}
-        <p className="competition-facts"><span><Icon name="calendar" size={17}/><bdi>{displayDate(detail.opensAt, language)} – {displayDate(detail.closesAt, language)}</bdi></span><span><Icon name="clock" size={17}/>{t(`${detail.durationMinutes} min`, `${detail.durationMinutes} دقيقة`)}</span></p>
+        <p className="competition-facts"><span><Icon name="calendar" size={17}/><bdi>{displayDate(detail.opensAt, language)} – {displayDate(detail.closesAt, language)}</bdi></span><span><Icon name="clock" size={17}/>{detail.timerEnabled === false ? t("Until closing", "حتى الإغلاق") : t(`${detail.durationMinutes} min`, `${detail.durationMinutes} دقيقة`)}</span></p>
         {detail.status !== "DRAFT" && <div className="record-actions">
           <button className="button" type="button" onClick={() => copyCompetitionLink(detail.id)}>{t("Copy competition link", "نسخ رابط المسابقة")}</button>
           <Link className="link-button" href={`/competitions/${detail.id}`} prefetch={false}>{t("Student competition link", "رابط المسابقة للطلاب")}</Link>
           {shareStatus && <span className="note" role="status">{shareStatus === "copied" ? t("Link copied.", "تم نسخ الرابط.") : t("Copy the address from the student competition link.", "انسخ العنوان من رابط المسابقة للطلاب.")}</span>}
         </div>}
         {canManage && <div className="record-actions">
-          {detail.status === "DRAFT" && <button className="button" type="button" disabled={busy} onClick={edit}>{t("Edit draft", "تعديل المسودة")}</button>}
+          <button className="button" type="button" disabled={busy} onClick={edit}>{t("Edit competition", "تعديل المسابقة")}</button>
           {detail.status === "DRAFT" && <button className="button primary" type="button" disabled={busy} onClick={() => setAction("activate")}>{actionText.activate}</button>}
           {playable && <button className="button" type="button" disabled={busy} onClick={() => setAction("close")}>{actionText.close}</button>}
           {(detail.status === "CLOSED" || detail.status === "ARCHIVED") && !detail.publishedAt && <button className="button primary" type="button" disabled={busy} onClick={() => setAction("publish")}>{actionText.publish}</button>}
@@ -145,12 +157,12 @@ export function StaffCompetitions({ admin, language, t }: { admin: boolean; lang
           </div>
         </div>}
       </article>
-      {(admin || detail.status !== "DRAFT") && <>
-        {admin && <nav className="record-actions" aria-label={t("Competition dashboard", "لوحة المسابقة")}>
+      {(canManage || detail.status !== "DRAFT") && <>
+        {canManage && <nav className="record-actions" aria-label={t("Competition dashboard", "لوحة المسابقة")}>
           {detail.status !== "DRAFT" && <button className="button" type="button" aria-pressed={!showLeaderboard} onClick={() => setShowLeaderboard(false)}>{t("Monitoring and results", "المتابعة والنتائج")}</button>}
           <button className="button" type="button" aria-pressed={showLeaderboard} onClick={() => setShowLeaderboard(true)}>{t("Leaderboards", "لوحات الترتيب")}</button>
         </nav>}
-        {admin && showLeaderboard ? <AdminLeaderboard key={detail.id} id={detail.id} t={t}/> :
+        {canManage && showLeaderboard ? <AdminLeaderboard key={detail.id} id={detail.id} t={t}/> :
           <>{detail.status !== "DRAFT" && <CompetitionMonitor key={detail.id} competition={detail} grades={grades} admin={admin} language={language} t={t}/>}</>}
       </>}
     </> : competitions === null ? !error && <p role="status">{t("Loading competitions…", "جارٍ تحميل المسابقات…")}</p>

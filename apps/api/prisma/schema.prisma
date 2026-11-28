@@ -28,9 +28,20 @@ enum Theme {
   christmas
 }
 
+model CompetitionGroup {
+  id           String              @id @default(uuid()) @db.Uuid
+  name         String              @unique
+  grades       Grade[]
+  staff        AdminUser[]
+  competitions Competition[]
+  leaderboard  OverallLeaderboard?
+}
+
 model Grade {
+  groupId      String             @default("00000000-0000-4000-8000-000000000001") @db.Uuid
+  group        CompetitionGroup   @relation(fields: [groupId], references: [id])
   id           String             @id @default(uuid()) @db.Uuid
-  name         String             @unique
+  name         String
   students     Student[]
   servants     ServantGrade[]
   questions    Question[]
@@ -38,6 +49,8 @@ model Grade {
   attempts     Attempt[]
   createdAt    DateTime           @default(now()) @db.Timestamptz(3)
   updatedAt    DateTime           @updatedAt @db.Timestamptz(3)
+
+  @@unique([groupId, name])
 }
 
 model Student {
@@ -60,6 +73,8 @@ model Student {
 }
 
 model AdminUser {
+  groupId      String         @default("00000000-0000-4000-8000-000000000001") @db.Uuid
+  group        CompetitionGroup @relation(fields: [groupId], references: [id])
   id           String         @id @default(uuid()) @db.Uuid
   fullName     String
   username     String         @unique
@@ -114,7 +129,9 @@ model Appearance {
 }
 
 model OverallLeaderboard {
-  id        Int     @id @default(1)
+  id        Int     @id @default(autoincrement())
+  groupId   String  @unique @default("00000000-0000-4000-8000-000000000001") @db.Uuid
+  group     CompetitionGroup @relation(fields: [groupId], references: [id])
   published Boolean @default(false)
 }
 
@@ -194,6 +211,8 @@ model Question {
 }
 
 model Competition {
+  groupId         String             @default("00000000-0000-4000-8000-000000000001") @db.Uuid
+  group           CompetitionGroup   @relation(fields: [groupId], references: [id])
   id              String             @id @default(uuid()) @db.Uuid
   title           String
   description     String             @default("")
@@ -202,6 +221,8 @@ model Competition {
   opensAt         DateTime           @db.Timestamptz(3)
   closesAt        DateTime           @db.Timestamptz(3)
   durationMinutes Int
+  timerEnabled    Boolean            @default(true)
+  hasStarted      Boolean            @default(false)
   status          CompetitionStatus  @default(DRAFT)
   publishedAt     DateTime?          @db.Timestamptz(3)
   sharedQuestions Boolean            @default(false)
@@ -216,6 +237,7 @@ model Competition {
   attempts        Attempt[]
 
   @@index([status, closesAt])
+  @@index([groupId, status, closesAt])
 }
 
 model CompetitionGrade {
@@ -257,6 +279,7 @@ model Attempt {
   status            AttemptStatus
   startedAt         DateTime?         @db.Timestamptz(3)
   expiresAt         DateTime?         @db.Timestamptz(3)
+  timerEnabled      Boolean           @default(true)
   finishedAt        DateTime?         @db.Timestamptz(3)
   submittedAt       DateTime?         @db.Timestamptz(3)
   position          Int               @default(0)

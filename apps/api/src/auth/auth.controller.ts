@@ -2,13 +2,14 @@ import { Controller, Get, HttpCode, Post, Req, Res } from '@nestjs/common';
 import { ApiTags } from '@nestjs/swagger';
 import type { Request, Response } from 'express';
 import { z } from 'zod';
-import { body, bodyDocs, empty, param, pin, username } from '../system/input';
+import { body, bodyDocs, empty, param, pin, query, username } from '../system/input';
 import { AuthService, cookieName, sessionToken } from './auth.service';
 import { Actor, Public } from './principal';
 import type { Principal } from './principal';
 
 const studentLogin = z.strictObject({
   gradeId: z.uuid(),
+  groupId: z.uuid().optional(),
   studentId: z.uuid(),
   pin,
 });
@@ -22,6 +23,8 @@ const staffSetup = z.strictObject({
   password: z.string().length(6),
 });
 
+const entryFilter = z.strictObject({ groupId: z.uuid().optional() });
+
 function cookieOptions() {
   return { httpOnly: true, sameSite: 'lax' as const, secure: process.env.NODE_ENV === 'production', path: '/' };
 }
@@ -33,14 +36,20 @@ export class AuthController {
 
   @Public()
   @Get('grades')
-  grades(@Req() req: Request) {
-    return this.auth.grades(req.ip ?? 'unknown');
+  grades(@Req() req: Request, @query(entryFilter) filter: z.infer<typeof entryFilter>) {
+    return this.auth.grades(req.ip ?? 'unknown', filter.groupId);
   }
 
   @Public()
   @Get('grades/:gradeId/students')
-  students(@param('gradeId') gradeId: string, @Req() req: Request) {
-    return this.auth.roster(gradeId, req.ip ?? 'unknown');
+  students(@param('gradeId') gradeId: string, @Req() req: Request, @query(entryFilter) filter: z.infer<typeof entryFilter>) {
+    return this.auth.roster(gradeId, req.ip ?? 'unknown', filter.groupId);
+  }
+
+  @Public()
+  @Get('competition-entry/:id')
+  competitionEntry(@param('id') id: string) {
+    return this.auth.competitionEntry(id);
   }
 
   @Public()

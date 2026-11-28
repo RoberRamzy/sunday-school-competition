@@ -2,14 +2,14 @@
 
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
-import { ApiError, api, errorText, json, type Language, type Theme, type Translate } from "../api";
+import { ApiError, api, errorText, groupHome, json, overallBoardPath, type Language, type Theme, type Translate } from "../api";
 import { ChristmasLights, SiteBrand } from "./site-brand";
 import { ChristmasControls, useChristmasSurface } from "./christmas-effects";
 import { Icon } from "./ui-icon";
 
 type Row = { rank: number; name: string; grade: string; score: number; maxScore: number; competitions?: number };
 type Board = { scope: string; name: string | null; rows: Row[] };
-type PublicBoards = { title: string; boards: Board[] };
+type PublicBoards = { title: string; boards: Board[]; provisional?: boolean };
 type TiePolicy = "SCORE_THEN_TIME" | "SCORE_ONLY";
 type StaffBoards = {
   tiePolicy: TiePolicy; status: string; scopes: string[]; boards: Board[]; publication: PublicBoards;
@@ -74,10 +74,10 @@ function overallTitle(t: Translate) {
 }
 
 function overallExplanation(t: Translate) {
-  return t("Ranks use total points from published competition results.", "يعتمد الترتيب على مجموع النقاط من نتائج المسابقات المنشورة.");
+  return t("Ranks use total points from published results and live competition boards. Shorter total elapsed time breaks ties.", "يعتمد الترتيب على مجموع النقاط من النتائج المنشورة ولوحات المسابقات المباشرة. وعند التعادل يتقدم صاحب أقصر وقت إجمالي.");
 }
 
-export function AdminOverallLeaderboard({ t }: { t: Translate }) {
+export function AdminOverallLeaderboard({ t, groupId }: { t: Translate; groupId: string }) {
   const path = "/admin/leaderboards/all";
   const [view, setView] = useState<(PublicBoards & { published: boolean }) | null>(null);
   const [busy, setBusy] = useState(false);
@@ -112,11 +112,11 @@ export function AdminOverallLeaderboard({ t }: { t: Translate }) {
     {!view && !error && <p role="status">{t("Loading standings…", "جارٍ تحميل الترتيب…")}</p>}
     {view && <div className="panel form-stack">
       <BoardView boards={view.boards} t={t} cumulative/>
-      <p className="note">{t("The public link shows full names and updates as competition results are published.", "يعرض الرابط العام الأسماء الكاملة ويتم تحديثه عند نشر نتائج المسابقات.")}</p>
+      <p className="note">{t("The public link shows full names and updates as published standings change.", "يعرض الرابط العام الأسماء الكاملة ويتم تحديثه عند تغيّر الترتيب المنشور.")}</p>
       <div className="record-actions">
         {!view.published ? <button type="button" className="button primary" disabled={busy} onClick={() => changeVisibility(true)}>{t("Publish overall leaderboard", "نشر لوحة ترتيب جميع المسابقات")}</button>
           : <>
-            <Link className="button" href="/leaderboards/all" prefetch={false}>{t("Open public leaderboard", "فتح لوحة الترتيب العامة")}</Link>
+            <Link className="button" href={overallBoardPath(groupId)} prefetch={false}>{t("Open public leaderboard", "فتح لوحة الترتيب العامة")}</Link>
             <button type="button" className="button" disabled={busy} onClick={() => changeVisibility(false)}>{t("Unpublish overall leaderboard", "إلغاء نشر لوحة ترتيب جميع المسابقات")}</button>
           </>}
       </div>
@@ -165,7 +165,7 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
   }
 
   const dirty = Boolean(view && (tiePolicy !== view.tiePolicy || scopes.length !== view.scopes.length || scopes.some(scope => !view.scopes.includes(scope))));
-  const canPublish = view && ["CLOSED", "ARCHIVED"].includes(view.status);
+  const canPublish = view && ["ACTIVE", "CLOSED", "ARCHIVED"].includes(view.status);
   return <section className="panel form-stack" aria-labelledby="leaderboard-heading">
     <div className="card-heading">
       <h2 id="leaderboard-heading" className="staff-board-heading">
@@ -177,7 +177,7 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
     {error ? <p role="alert" className="notice error">{errorText(error, t)}</p> : null}
     {!view && !error && <p role="status">{t("Loading standings…", "جارٍ تحميل الترتيب…")}</p>}
     {view && <>
-      {!canPublish && <p className="note">{t("Provisional standings. Close the competition to publish.", "الترتيب مؤقت. أغلق المسابقة للنشر.")}</p>}
+      {!canPublish && <p className="note">{t("Open or close the competition before publishing its leaderboard.", "افتح المسابقة أو أغلقها قبل نشر لوحة ترتيبها.")}</p>}
       {!view.overallAvailable && <p className="note">{t("Overall is available when every grade uses the same frozen quiz.", "يتاح الترتيب العام عند استخدام كل الصفوف الاختبار نفسه.")}</p>}
       <BoardView boards={view.boards} t={t}/>
       <form className="form-stack" onSubmit={save}>
@@ -212,21 +212,46 @@ export function AdminLeaderboard({ id, t }: { id: string; t: Translate }) {
   </section>;
 }
 
-export function PublicLeaderboard({ id, language, theme }: { id: string; language: Language; theme: Theme }) {
+export function PublicLeaderboard({ id, groupId, language, theme }: { id: string; groupId?: string; language: Language; theme: Theme }) {
   const t: Translate = (en, ar) => language === "ar" ? ar : en;
   const cumulative = id === "all";
   const [boards, setBoards] = useState<PublicBoards | null>(null);
   const [error, setError] = useState<unknown>(null);
+  const path = cumulative ? overallBoardPath(groupId) : `/leaderboards/${id}`;
   useEffect(() => {
     const controller = new AbortController();
-    api<PublicBoards>(`/leaderboards/${id}`, { signal: controller.signal }).then(setBoards).catch(error => {
-      if (!controller.signal.aborted) setError(error);
-    });
-    return () => controller.abort();
-  }, [id]);
+    let pending = false;
+    async function refresh() {
+      if (document.hidden || pending) return;
+      pending = true;
+      try {
+        const standings = await api<PublicBoards>(path, { signal: controller.signal });
+        if (!controller.signal.aborted) {
+          setBoards(standings);
+          setError(null);
+        }
+      } catch (error) {
+        if (!controller.signal.aborted) {
+          if (error instanceof ApiError && [400, 404].includes(error.status)) setBoards(null);
+          setError(error);
+        }
+      } finally {
+        pending = false;
+      }
+    }
+    void refresh();
+    const interval = window.setInterval(refresh, 15_000);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      controller.abort();
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [path]);
   const christmas = theme === "christmas";
   const { snowRunning } = useChristmasSurface(theme);
-  const back = <Link href="/" className={christmas ? "utility leaderboard-back" : "link-button"}>
+  const home = groupHome(groupId);
+  const back = <Link href={home} className={christmas ? "utility leaderboard-back" : "link-button"}>
     {t("Back to the competition site", "العودة إلى موقع المسابقة")}
   </Link>;
   return <div className="site" data-theme={theme} data-snow-running={snowRunning} lang={language} dir={language === "ar" ? "rtl" : "ltr"}>
@@ -234,7 +259,7 @@ export function PublicLeaderboard({ id, language, theme }: { id: string; languag
       <a className="skip-link" href="#main-content">{t("Skip to content", "انتقل إلى المحتوى")}</a>
       <header className="site-header">
         <div className="header-inner">
-          <SiteBrand href="/" t={t}/>
+          <SiteBrand href={home} t={t}/>
           <ChristmasLights/>
           <nav aria-label={t("Site", "الموقع")}>{back}</nav>
         </div>
@@ -249,6 +274,8 @@ export function PublicLeaderboard({ id, language, theme }: { id: string; languag
       </div>
       {boards ? <div className="panel form-stack">
         {cumulative && <p className="subtle">{overallExplanation(t)}</p>}
+        {boards.provisional && <p><span className="status">{t("Provisional", "ترتيب مؤقت")}</span></p>}
+        {Boolean(error) && <p className="note" role="status">{t("Live standings could not refresh. Trying again shortly.", "تعذّر تحديث الترتيب المباشر. ستتم المحاولة مجددًا قريبًا.")}</p>}
         <BoardView boards={boards.boards} t={t} cumulative={cumulative} reveal/>
       </div>
         : error ? <p role="alert">{error instanceof ApiError && [400, 404].includes(error.status) ? t("This leaderboard is unavailable.", "لوحة الترتيب غير متاحة.") : errorText(error, t)}</p>

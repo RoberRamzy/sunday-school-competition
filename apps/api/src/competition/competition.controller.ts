@@ -110,7 +110,6 @@ export class StaffAttemptController {
   }
 
   @Post(':id/authorize-replacement')
-  @Roles('SUPER_ADMIN')
   @HttpCode(200)
   @bodyDocs(reasonInput)
   replace(@Actor() actor: StaffPrincipal, @param('id') id: string, @body(reasonInput) input: z.infer<typeof reasonInput>) {

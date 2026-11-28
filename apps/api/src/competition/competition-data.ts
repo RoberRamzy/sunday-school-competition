@@ -1,7 +1,7 @@
-import { BadRequestException, ForbiddenException } from '@nestjs/common';
+import { BadRequestException, ForbiddenException, NotFoundException } from '@nestjs/common';
 import { Competition, Prisma, Question } from '@prisma/client';
 import { z } from 'zod';
-import { gradeScope, StaffPrincipal } from '../auth/principal';
+import { gradeScope, groupOf, StaffPrincipal } from '../auth/principal';
 import { competitionInput, ownedQuestionInput, snapshotInput, Snapshot } from './competition.input';
 
 export function validateQuestion(input: Pick<z.infer<typeof ownedQuestionInput>, 'type' | 'items' | 'correctOrder'>) {
@@ -26,6 +26,7 @@ export const gradeSelections = {
 
 // Call with the competition locked so its eligible grades cannot change during authorization.
 export async function requireCompetitionManagement(tx: Prisma.TransactionClient, actor: StaffPrincipal, id: string) {
+  if (!await tx.competition.count({ where: { id, groupId: groupOf(actor) } })) throw new NotFoundException('Competition was not found');
   const scope = await gradeScope(tx, actor);
   if (!scope) return;
   const grades = await tx.competitionGrade.findMany({ where: { competitionId: id }, select: { gradeId: true } });
@@ -35,9 +36,9 @@ export async function requireCompetitionManagement(tx: Prisma.TransactionClient,
 export function competitionInfo(competition: Competition & {
   grades: Prisma.CompetitionGradeGetPayload<{ include: typeof gradeSelections.include }>[];
 }, now: Date) {
-  const { id, title, description, instructions, opensAt, closesAt, durationMinutes, publishedAt, tiePolicy, sharedQuestions } = competition;
+  const { id, title, description, instructions, opensAt, closesAt, durationMinutes, timerEnabled, publishedAt, tiePolicy, sharedQuestions } = competition;
   return {
-    id, title, description, instructions, opensAt, closesAt, durationMinutes, publishedAt, tiePolicy, sharedQuestions,
+    id, title, description, instructions, opensAt, closesAt, durationMinutes, timerEnabled, publishedAt, tiePolicy, sharedQuestions,
     status: effectiveStatus(competition, now),
     grades: competition.grades.map((grade) => ({
       gradeId: grade.gradeId, blueprint: grade.blueprint, questionIds: grade.questions.map((row) => row.questionId),

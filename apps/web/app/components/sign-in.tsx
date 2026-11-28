@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState, type FormEvent } from "react";
-import { api, errorText, json, type Grade, type Principal, type Theme, type Translate } from "../api";
+import { api, DEFAULT_GROUP_ID, errorText, groupGradeQuery, json, type Grade, type Principal, type Theme, type Translate } from "../api";
 import { Icon } from "./ui-icon";
 
 type Name = { id: string; displayLabel: string };
@@ -12,8 +12,8 @@ function normalizeDigits(value: string) {
   return value.replace(/[٠-٩۰-۹]/g, digit => String(digit.charCodeAt(0) - (digit >= "۰" ? 0x06f0 : 0x0660)));
 }
 
-export function SignIn({ staff, theme, t, onSignIn }: {
-  staff: boolean; theme: Theme; t: Translate; onSignIn: (principal: Principal) => void;
+export function SignIn({ staff, groupId, theme, t, onSignIn }: {
+  staff: boolean; groupId: string; theme: Theme; t: Translate; onSignIn: (principal: Principal) => void;
 }) {
   const [mode, setMode] = useState<Mode>("login");
   const [grades, setGrades] = useState<Grade[]>([]);
@@ -43,26 +43,26 @@ export function SignIn({ staff, theme, t, onSignIn }: {
   useEffect(() => {
     if (staff) return;
     const controller = new AbortController();
-    api<Grade[]>("/auth/grades", { signal: controller.signal }).then((grades) => {
+    api<Grade[]>(`/auth/grades${groupGradeQuery(groupId)}`, { signal: controller.signal }).then((grades) => {
       setGrades(grades);
       setLookup("ready");
     }).catch(() => {
       if (!controller.signal.aborted) setLookup("error");
     });
     return () => controller.abort();
-  }, [staff, retry]);
+  }, [staff, groupId, retry]);
 
   useEffect(() => {
     if (!gradeId) return;
     const controller = new AbortController();
-    api<Name[]>(`/auth/grades/${gradeId}/students`, { signal: controller.signal }).then((names) => {
+    api<Name[]>(`/auth/grades/${gradeId}/students${groupGradeQuery(groupId)}`, { signal: controller.signal }).then((names) => {
       setNames(names);
       setNameLookup("ready");
     }).catch(() => {
       if (!controller.signal.aborted) setNameLookup("error");
     });
     return () => controller.abort();
-  }, [gradeId, retry]);
+  }, [gradeId, groupId, retry]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -75,7 +75,8 @@ export function SignIn({ staff, theme, t, onSignIn }: {
     const request = staff
       ? { username: String(form.get("username")).trim(), password: normalizeCredential(credential),
           ...(activating ? { setupCode: String(form.get("activationCode")).trim() } : {}) }
-      : { gradeId, studentId, pin: credential, ...(activating ? { activationCode: String(form.get("activationCode")).trim() } : {}) };
+      : { gradeId, studentId, pin: credential, ...(groupId === DEFAULT_GROUP_ID ? {} : { groupId }),
+          ...(activating ? { activationCode: String(form.get("activationCode")).trim() } : {}) };
     try {
       const principal = await api<Principal>(`/auth/${staff ? (activating ? "staff-setup" : "staff-login") : mode}`, json("POST", request));
       onSignIn(principal);

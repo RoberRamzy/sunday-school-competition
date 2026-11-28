@@ -727,3 +727,10 @@ form .notice { margin-block: .35rem; }
 .button.danger { color: #fff; background: #8c2335; border-color: #8c2335; }
 .button.danger:not(:disabled):hover { background: #70192c; }
 .link-button.danger-text { color: #8c2335; }
+
+.workspace-group {
+  display: grid;
+  gap: .35rem;
+  margin-block: 1rem;
+}
+.workspace-group select { appearance: auto; padding-inline-end: .7rem; }
